@@ -1,0 +1,52 @@
+[project]
+name = "nlp-doc-chat-backend"
+version = "0.1.0"
+description = "Backend for NLP Doc Chat"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.1.0",
+    "sqlalchemy>=2.0.25",
+    "aiosqlite>=0.19.0",
+    "alembic>=1.13.1",
+    "qdrant-client>=1.7.0",
+    "redis>=5.0.1",
+    "celery>=5.3.6",
+    "structlog>=24.1.0",
+    "opentelemetry-api>=1.22.0",
+    "opentelemetry-sdk>=1.22.0",
+    "httpx>=0.26.0",
+    "python-multipart>=0.0.7",
+    # Ingestion & Parsing
+    "pypdf>=4.0.1",
+    "python-docx>=1.1.0",
+    "pdfplumber>=0.10.3",
+]
+
+[project.optional-dependencies]
+ml = [
+    "sentence-transformers>=2.5.1",
+    "torch>=2.2.0",
+    "rank-bm25>=0.2.2",
+    "pandas>=2.2.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.4",
+    "ruff>=0.1.14",
+    "mypy>=1.8.0",
+    "import-linter>=2.0",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+# Can be used later if we host our own packages
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
