@@ -1,2 +1,27 @@
 services:
-  
+  backend:
+    build:
+      target: development
+    volumes:
+      - ./backend:/app
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      - ENV=development
+
+  worker:
+    build:
+      target: development
+    volumes:
+      - ./backend:/app
+    command: watchmedo auto-restart --directory=./src --pattern=*.py --recursive -- celery -A src.worker.main worker --loglevel=info
+
+  frontend:
+    build:
+      target: development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    command: npm run dev
+    environment:
+      - NODE_ENV=development
