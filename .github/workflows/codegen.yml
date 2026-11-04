@@ -1,0 +1,24 @@
+name: API Codegen
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'backend/src/api/**'
+      - '.github/workflows/codegen.yml'
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Verify OpenAPI schema and TS Client are in sync
+        run: |
+          echo "This step will be implemented after FastAPI and Next.js are initialized."
+          # 1. Start backend, extract openapi.json
+          # 2. Run codegen script
+          # 3. git diff --exit-code || (echo "Codegen out of sync. Run make codegen." && exit 1)

@@ -218,3 +218,27 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# Environment variables
+.env.local
+.env.*.local
+
+
+.venv/
+
+# Node.js
+node_modules/
+.next/
+out/
+# Database & Data
+data/
+*.sqlite
+*.db
+*.sqlite3
+
+# OS & IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
