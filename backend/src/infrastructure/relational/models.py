@@ -1,9 +1,12 @@
-from datetime import datetime, timezone
-from sqlalchemy import String, Integer, ForeignKey, Text, DateTime
+from datetime import UTC, datetime
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
 
 class Base(DeclarativeBase):
     pass
+
 
 class DocumentModel(Base):
     __tablename__ = "documents"
@@ -15,12 +18,14 @@ class DocumentModel(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     page_count: Mapped[int] = mapped_column(Integer, default=0)
     error_message: Mapped[str | None] = mapped_column(String, nullable=True)
-    access_tags: Mapped[str] = mapped_column(String, default="") # Comma-separated
+    access_tags: Mapped[str] = mapped_column(String, default="")  # Comma-separated
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
-    chunks: Mapped[list["ChunkModel"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+    chunks: Mapped[list["ChunkModel"]] = relationship(
+        back_populates="document", cascade="all, delete-orphan"
+    )
 
 
 class ChunkModel(Base):
@@ -44,5 +49,7 @@ class JobModel(Base):
     status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
     error: Mapped[str | None] = mapped_column(String, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc)
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )

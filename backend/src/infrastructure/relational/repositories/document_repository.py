@@ -1,8 +1,9 @@
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.domain.entities.document import Document, DocumentStatus
-from src.domain.value_objects.document_id import DocumentId
 from src.domain.ports.document_repository import DocumentRepository as IDocumentRepository
+from src.domain.value_objects.document_id import DocumentId
 from src.infrastructure.relational.models import DocumentModel
 
 
@@ -75,7 +76,8 @@ class DocumentRepository(IDocumentRepository):
                 error_message=m.error_message,
                 access_tags=m.access_tags.split(",") if m.access_tags else [],
                 created_at=m.created_at,
-            ) for m in models
+            )
+            for m in models
         ]
 
     async def delete(self, doc_id: DocumentId) -> None:

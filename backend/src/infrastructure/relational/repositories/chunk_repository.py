@@ -1,10 +1,12 @@
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+
 from src.domain.entities.chunk import Chunk
-from src.domain.value_objects.document_id import DocumentId
-from src.domain.value_objects.chunk_id import ChunkId
 from src.domain.ports.chunk_repository import ChunkRepository as IChunkRepository
+from src.domain.value_objects.chunk_id import ChunkId
+from src.domain.value_objects.document_id import DocumentId
 from src.infrastructure.relational.models import ChunkModel
+
 
 class ChunkRepository(IChunkRepository):
     def __init__(self, session: AsyncSession):
@@ -18,8 +20,9 @@ class ChunkRepository(IChunkRepository):
                 text=c.text,
                 page=c.page,
                 section=c.section,
-                parent_id=c.parent_id
-            ) for c in chunks
+                parent_id=c.parent_id,
+            )
+            for c in chunks
         ]
         self.session.add_all(models)
         await self.session.commit()
@@ -34,8 +37,9 @@ class ChunkRepository(IChunkRepository):
                 text=m.text,
                 page=m.page,
                 section=m.section,
-                parent_id=m.parent_id
-            ) for m in result.scalars().all()
+                parent_id=m.parent_id,
+            )
+            for m in result.scalars().all()
         ]
 
     async def delete_by_document(self, doc_id: DocumentId) -> None:

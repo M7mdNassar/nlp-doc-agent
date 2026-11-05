@@ -1,7 +1,8 @@
-import uuid
 import asyncio
-from src.infrastructure.cache.redis_client import get_redis_client
+import uuid
+
 from src.domain.ports.lock import Lock as ILock
+from src.infrastructure.cache.redis_client import get_redis_client
 
 
 class RedisLock(ILock):

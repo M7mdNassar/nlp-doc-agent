@@ -1,8 +1,9 @@
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.domain.entities.job import Job, JobStatus
-from src.domain.value_objects.document_id import DocumentId
 from src.domain.ports.job_repository import JobRepository as IJobRepository
+from src.domain.value_objects.document_id import DocumentId
 from src.infrastructure.relational.models import JobModel
 
 
@@ -23,7 +24,7 @@ class JobRepository(IJobRepository):
                 job_id=job.job_id,
                 document_id=str(job.document_id),
                 status=job.status.value,
-                error=job.error
+                error=job.error,
             )
             self.session.add(model)
 
@@ -42,5 +43,5 @@ class JobRepository(IJobRepository):
             document_id=DocumentId(model.document_id),
             status=JobStatus(model.status),
             error=model.error,
-            updated_at=model.updated_at
+            updated_at=model.updated_at,
         )

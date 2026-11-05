@@ -1,7 +1,9 @@
 import json
 from typing import Any
-from src.infrastructure.cache.redis_client import get_redis_client
+
 from src.domain.ports.cache import ExactCache as IExactCache
+from src.infrastructure.cache.redis_client import get_redis_client
+
 
 class RedisExactCache(IExactCache):
     def __init__(self):
