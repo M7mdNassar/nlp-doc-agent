@@ -37,4 +37,4 @@ jobs:
         run: cd backend && uv run mypy src
         
       - name: Test with pytest
-        run: cd backend && uv run pytest
+        run: cd backend && uv run --extra dev pytest
