@@ -1,5 +1,6 @@
 from .chunk import Chunk
 from .citation import Citation
+from .conversation import Conversation, Message
 from .document import Document, DocumentStatus
 from .evidence import EvidencePackage
 from .job import Job, JobStatus
@@ -14,4 +15,6 @@ __all__ = [
     "EvidencePackage",
     "Job",
     "JobStatus",
+    "Conversation",
+    "Message",
 ]
