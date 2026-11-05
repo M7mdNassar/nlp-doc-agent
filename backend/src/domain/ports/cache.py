@@ -1,0 +1,6 @@
+from typing import Any, Protocol
+
+
+class ExactCache(Protocol):
+    async def get(self, key: str) -> dict[str, Any] | None: ...
+    async def set(self, key: str, value: dict[str, Any], ttl: int) -> None: ...
