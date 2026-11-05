@@ -1,14 +1,17 @@
 import logging
 import sys
+
 import structlog
+
 from src.core.config import settings
+
 
 def setup_logging() -> None:
     """Configures structlog for JSON output in production and pretty output in dev."""
-    
+
     # Set standard library logging level
     log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
-    
+
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,
