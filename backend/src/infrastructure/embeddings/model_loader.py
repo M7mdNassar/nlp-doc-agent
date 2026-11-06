@@ -1,3 +1,5 @@
+from typing import ClassVar, Self
+
 import structlog
 from sentence_transformers import SentenceTransformer
 
@@ -7,10 +9,10 @@ logger = structlog.get_logger(__name__)
 
 
 class EmbeddingModelLoader:
-    _instance = None
-    _model = None
+    _instance: ClassVar[Self | None] = None
+    _model: SentenceTransformer | None = None
 
-    def __new__(cls):
+    def __new__(cls) -> Self:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance

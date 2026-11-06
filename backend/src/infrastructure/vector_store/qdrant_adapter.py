@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 import structlog
 from qdrant_client import AsyncQdrantClient, models
@@ -9,11 +10,13 @@ from src.domain.entities.evidence import EvidencePackage
 from src.domain.ports.vector_store import VectorStore
 from src.domain.value_objects.chunk_id import ChunkId
 from src.domain.value_objects.document_id import DocumentId
+from src.domain.value_objects.sparse_vector import SparseVector
 
 from .schema import (
     COLLECTION_NAME,
     DENSE_VECTOR_NAME,
     PAYLOAD_ACCESS_TAGS,
+    PAYLOAD_CHUNK_ID,
     PAYLOAD_DOC_ID,
     PAYLOAD_PAGE,
     SPARSE_VECTOR_NAME,
@@ -23,15 +26,17 @@ logger = structlog.get_logger(__name__)
 
 
 class QdrantAdapter(VectorStore):
-    def __init__(self):
+    def __init__(self) -> None:
         self.client = AsyncQdrantClient(url=settings.QDRANT_URL)
 
     async def upsert(
         self,
         chunks: list[Chunk],
         dense_vectors: list[list[float]],
-        sparse_vectors: list[models.SparseVector],
+        sparse_vectors: list[SparseVector],
     ) -> None:
+        if not (len(chunks) == len(dense_vectors) == len(sparse_vectors)):
+            raise ValueError("Chunks, dense vectors, and sparse vectors must have equal lengths")
         if not chunks:
             return
 
@@ -39,12 +44,15 @@ class QdrantAdapter(VectorStore):
         for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors, strict=True):
             points.append(
                 models.PointStruct(
-                    id=str(chunk.id),
+                    id=str(uuid5(NAMESPACE_URL, str(chunk.id))),
                     vector={
                         DENSE_VECTOR_NAME: dense,
-                        SPARSE_VECTOR_NAME: sparse,
+                        SPARSE_VECTOR_NAME: models.SparseVector(
+                            indices=sparse.indices, values=sparse.values
+                        ),
                     },
                     payload={
+                        PAYLOAD_CHUNK_ID: str(chunk.id),
                         PAYLOAD_DOC_ID: str(chunk.document_id),
                         PAYLOAD_PAGE: chunk.page,
                         "section": chunk.section,
@@ -60,7 +68,7 @@ class QdrantAdapter(VectorStore):
     async def hybrid_search(
         self,
         query_dense: list[float],
-        query_sparse: models.SparseVector,
+        query_sparse: SparseVector,
         filters: dict[str, Any],
         limit: int = 20,
     ) -> EvidencePackage:
@@ -103,7 +111,9 @@ class QdrantAdapter(VectorStore):
                         filter=qdrant_filter,
                     ),
                     models.Prefetch(
-                        query=query_sparse,
+                        query=models.SparseVector(
+                            indices=query_sparse.indices, values=query_sparse.values
+                        ),
                         using=SPARSE_VECTOR_NAME,
                         limit=limit,
                         filter=qdrant_filter,
@@ -123,7 +133,7 @@ class QdrantAdapter(VectorStore):
             payload = point.payload or {}
             chunks.append(
                 Chunk(
-                    id=ChunkId(point.id),
+                    id=ChunkId(str(payload[PAYLOAD_CHUNK_ID])),
                     document_id=DocumentId(payload.get(PAYLOAD_DOC_ID, "")),
                     text=payload.get("text", ""),
                     page=payload.get(PAYLOAD_PAGE, 0),
@@ -132,7 +142,7 @@ class QdrantAdapter(VectorStore):
                 )
             )
 
-        return EvidencePackage(chunks=chunks, diagnostics={"raw_results": len(chunks)})
+        return EvidencePackage(chunks=chunks, diagnostics={"raw_results": str(len(chunks))})
 
     async def delete_by_document(self, document_id: str) -> None:
         await self.client.delete(

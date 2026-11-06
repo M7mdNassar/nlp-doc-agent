@@ -16,7 +16,7 @@ class LLMRouter(LLMClient):
     In v1, we primarily use Groq. If Groq fails, we can add Cerebras here.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.providers: list[LLMClient] = [
             GroqAdapter(),
             # CerebrasAdapter(), # Will be added later

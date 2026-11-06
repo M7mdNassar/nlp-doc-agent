@@ -13,7 +13,7 @@ logger = structlog.get_logger(__name__)
 
 
 class GroqAdapter(LLMClient):
-    def __init__(self):
+    def __init__(self) -> None:
         self.client = AsyncGroq(api_key=settings.GROQ_API_KEY)
         # Using standard production models
         self.model = "llama-3.3-70b-versatile"
@@ -32,7 +32,6 @@ class GroqAdapter(LLMClient):
         content = response.choices[0].message.content or ""
         return content
 
-    @async_retry(max_retries=3)
     async def stream(
         self, prompt: str, system: str, budget: TokenBudget
     ) -> AsyncGenerator[str, None]:
