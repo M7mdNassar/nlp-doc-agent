@@ -1,5 +1,4 @@
 from typing import Any
-from uuid import NAMESPACE_URL, uuid5
 
 import structlog
 from qdrant_client import AsyncQdrantClient, models
@@ -10,7 +9,7 @@ from src.domain.entities.evidence import EvidencePackage
 from src.domain.ports.vector_store import VectorStore
 from src.domain.value_objects.chunk_id import ChunkId
 from src.domain.value_objects.document_id import DocumentId
-from src.domain.value_objects.sparse_vector import SparseVector
+from src.domain.value_objects.sparse_vector import SparseVector as DomainSparseVector
 
 from .schema import (
     COLLECTION_NAME,
@@ -33,10 +32,8 @@ class QdrantAdapter(VectorStore):
         self,
         chunks: list[Chunk],
         dense_vectors: list[list[float]],
-        sparse_vectors: list[SparseVector],
+        sparse_vectors: list[DomainSparseVector],
     ) -> None:
-        if not (len(chunks) == len(dense_vectors) == len(sparse_vectors)):
-            raise ValueError("Chunks, dense vectors, and sparse vectors must have equal lengths")
         if not chunks:
             return
 
@@ -44,31 +41,29 @@ class QdrantAdapter(VectorStore):
         for chunk, dense, sparse in zip(chunks, dense_vectors, sparse_vectors, strict=True):
             points.append(
                 models.PointStruct(
-                    id=str(uuid5(NAMESPACE_URL, str(chunk.id))),
+                    id=str(chunk.id),
                     vector={
                         DENSE_VECTOR_NAME: dense,
-                        SPARSE_VECTOR_NAME: models.SparseVector(
+                        SPARSE_VECTOR_NAME: models.SparseVector(  # <--- Qdrant type
                             indices=sparse.indices, values=sparse.values
                         ),
                     },
                     payload={
-                        PAYLOAD_CHUNK_ID: str(chunk.id),
                         PAYLOAD_DOC_ID: str(chunk.document_id),
                         PAYLOAD_PAGE: chunk.page,
                         "section": chunk.section,
                         "text": chunk.text,
                         "parent_id": chunk.parent_id,
-                        PAYLOAD_ACCESS_TAGS: [],  # Populated from document metadata
+                        PAYLOAD_ACCESS_TAGS: [],
                     },
                 )
             )
-
         await self.client.upsert(collection_name=COLLECTION_NAME, points=points, wait=True)
 
     async def hybrid_search(
         self,
         query_dense: list[float],
-        query_sparse: SparseVector,
+        query_sparse: DomainSparseVector,
         filters: dict[str, Any],
         limit: int = 20,
     ) -> EvidencePackage:

@@ -12,6 +12,7 @@ class VectorStore(Protocol):
         dense_vectors: list[list[float]],
         sparse_vectors: list[SparseVector],
     ) -> None: ...
+
     async def hybrid_search(
         self,
         query_dense: list[float],
@@ -19,4 +20,5 @@ class VectorStore(Protocol):
         filters: dict[str, Any],
         limit: int = 20,
     ) -> EvidencePackage: ...
+
     async def delete_by_document(self, document_id: str) -> None: ...

@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 
 from src.core.config import settings
-from src.domain.entities.document import Document
+from src.domain.entities.document import Document, DocumentStatus
 from src.domain.entities.job import Job, JobStatus
 from src.domain.ports.document_repository import DocumentRepository
 from src.domain.ports.job_repository import JobRepository
@@ -32,7 +32,11 @@ class UploadDocumentUseCase:
 
         # 3. Create Domain Entities
         doc = Document(
-            id=doc_id, name=file_name, file_type=file_type, checksum=checksum, status="queued"
+            id=doc_id,
+            name=file_name,
+            file_type=file_type,
+            checksum=checksum,
+            status=DocumentStatus.QUEUED,
         )
         job = Job(job_id=str(uuid.uuid4()), document_id=doc_id, status=JobStatus.QUEUED)
 

@@ -2,13 +2,13 @@ from pathlib import Path
 
 import structlog
 from fastembed import SparseTextEmbedding
-from qdrant_client.models import SparseVector
 
 from src.domain.ports.chunk_repository import ChunkRepository
 from src.domain.ports.document_repository import DocumentRepository
 from src.domain.ports.embedder import Embedder
 from src.domain.ports.vector_store import VectorStore
 from src.domain.value_objects.document_id import DocumentId
+from src.domain.value_objects.sparse_vector import SparseVector
 from src.infrastructure.parsers.factory import parser_factory
 
 from .chunker import Chunker
@@ -32,7 +32,7 @@ class IngestionPipeline:
         # BM25 sparse embedding model
         self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
-    async def run(self, doc_id: DocumentId, file_path: str):
+    async def run(self, doc_id: DocumentId, file_path: str) -> None:
         doc = await self.doc_repo.get(doc_id)
         if not doc:
             logger.error(f"Document {doc_id} not found.")
@@ -46,7 +46,7 @@ class IngestionPipeline:
             # 2. Parse
             path = Path(file_path)
             parser = parser_factory.get_parser(doc.file_type)
-            elements = await parser.parse(path)
+            elements = await parser.parse(path)  # Type is now list[ParsedElement]
 
             # 3. Update Status: EMBEDDING
             page_count = max([e.page for e in elements]) if elements else 1
@@ -60,14 +60,13 @@ class IngestionPipeline:
             texts = [c.text for c in chunks]
             dense_vectors = await self.embedder.embed_documents(texts)
 
-            # Fastembed is synchronous, run in list
             sparse_embeddings = list(self.sparse_model.embed(texts))
             sparse_vectors = [
                 SparseVector(indices=e.indices.tolist(), values=e.values.tolist())
                 for e in sparse_embeddings
             ]
 
-            # 6. Store in DB (Metadata) & Qdrant (Vectors)
+            # 6. Store
             await self.chunk_repo.save_batch(chunks)
             await self.vector_store.upsert(chunks, dense_vectors, sparse_vectors)
 

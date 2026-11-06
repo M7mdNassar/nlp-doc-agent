@@ -15,12 +15,12 @@ logger = structlog.get_logger(__name__)
 
 
 @celery_app.task(name="ingest_document")
-def ingest_document_task(document_id: str, file_path: str):
+def ingest_document_task(document_id: str, file_path: str) -> None:
     """Celery task to run the async pipeline."""
     asyncio.run(_ingest_document_async(document_id, file_path))
 
 
-async def _ingest_document_async(document_id: str, file_path: str):
+async def _ingest_document_async(document_id: str, file_path: str) -> None:
     logger.info(f"Starting ingestion for {document_id}")
     async with AsyncSessionLocal() as session:
         doc_repo = DocumentRepository(session)
