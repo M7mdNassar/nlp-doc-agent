@@ -9,8 +9,6 @@ class LLMClient(Protocol):
         """Standard completion."""
         ...
 
-    async def stream(
-        self, prompt: str, system: str, budget: TokenBudget
-    ) -> AsyncGenerator[str, None]:
+    def stream(self, prompt: str, system: str, budget: TokenBudget) -> AsyncGenerator[str, None]:
         """Stream tokens for the Answer Agent."""
         ...
