@@ -1,9 +1,10 @@
+
 [project]
 name = "nlp-doc-chat-backend"
 version = "0.1.0"
 description = "Backend for NLP Doc Chat"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.12,<3.14"
 dependencies = [
     "fastapi>=0.109.0",
     "uvicorn[standard]>=0.27.0",
@@ -13,6 +14,8 @@ dependencies = [
     "aiosqlite>=0.19.0",
     "alembic>=1.13.1",
     "qdrant-client>=1.7.0",
+    "fastembed>=0.9.1",
+    "onnxruntime==1.23.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "redis>=5.0.1",
     "celery>=5.3.6",
     "structlog>=24.1.0",
@@ -29,11 +32,12 @@ dependencies = [
 
 [project.optional-dependencies]
 ml = [
-    "sentence-transformers>=2.5.1",
-    "torch>=2.2.0",
+    "sentence-transformers>=2.5.1; sys_platform != 'darwin' or platform_machine != 'x86_64'",
+    "torch>=2.2.0; sys_platform != 'darwin' or platform_machine != 'x86_64'",
     "rank-bm25>=0.2.2",
     "pandas>=2.2.0",
 ]
+
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.4",
@@ -44,6 +48,9 @@ dev = [
 
 [tool.uv]
 package = false
+required-environments = [
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
 
 [tool.uv.sources]
 # Can be used later if we host our own packages
