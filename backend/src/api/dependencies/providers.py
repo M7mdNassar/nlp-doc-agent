@@ -1,4 +1,5 @@
-from typing import Annotated
+from functools import lru_cache
+from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,55 +15,96 @@ from src.application.use_cases.delete_document import DeleteDocumentUseCase
 from src.application.use_cases.get_job_status import GetJobStatusUseCase
 from src.application.use_cases.list_documents import ListDocumentsUseCase
 from src.application.use_cases.upload_document import UploadDocumentUseCase
-from src.infrastructure.cache.exact_cache import RedisExactCache
-from src.infrastructure.embeddings.bge_adapter import BGEAdapter
-from src.infrastructure.llm.router import LLMRouter
 from src.infrastructure.relational.db import get_db_session
 from src.infrastructure.relational.repositories.document_repository import DocumentRepository
 from src.infrastructure.relational.repositories.job_repository import JobRepository
-from src.infrastructure.rerankers.cross_encoder_adapter import CrossEncoderAdapter
-from src.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
 
-# --- Infrastructure Singletons ---
-# These are heavy and shouldn't be re-instantiated per request
-_llm_router = LLMRouter()
-_embedder = BGEAdapter()
-_reranker = CrossEncoderAdapter()
-_vector_store = QdrantAdapter()
-_cache = RedisExactCache()
+# 1. Import the heavy types ONLY during type checking
+if TYPE_CHECKING:
+    from src.infrastructure.embeddings.bge_adapter import BGEAdapter
+    from src.infrastructure.llm.router import LLMRouter
+    from src.infrastructure.rerankers.cross_encoder_adapter import CrossEncoderAdapter
+    from src.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
+
+# --- Lazy Singletons ---
+# lru_cache ensures they are only initialized once, AND only when needed.
+
+
+@lru_cache
+def get_llm() -> "LLMRouter":  # 2. Add return type hint
+    from src.infrastructure.llm.router import LLMRouter
+
+    return LLMRouter()
+
+
+@lru_cache
+def get_embedder() -> "BGEAdapter":  # 2. Add return type hint
+    from src.infrastructure.embeddings.bge_adapter import BGEAdapter
+
+    return BGEAdapter()
+
+
+@lru_cache
+def get_reranker() -> "CrossEncoderAdapter":  # 2. Add return type hint
+    from src.infrastructure.rerankers.cross_encoder_adapter import CrossEncoderAdapter
+
+    return CrossEncoderAdapter()
+
+
+@lru_cache
+def get_vector_store() -> "QdrantAdapter":  # 2. Add return type hint
+    from src.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
+
+    return QdrantAdapter()
+
+
+# --- Database Dependency ---
+
+DBSession = Annotated[AsyncSession, Depends(get_db_session)]
+
 
 # --- Use Case Wiring ---
 
 
-def get_upload_doc_uc(
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> UploadDocumentUseCase:
-    return UploadDocumentUseCase(DocumentRepository(session), JobRepository(session))
+def get_upload_doc_uc(session: DBSession) -> UploadDocumentUseCase:
+    return UploadDocumentUseCase(
+        DocumentRepository(session),
+        JobRepository(session),
+    )
 
 
-def get_list_docs_uc(
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> ListDocumentsUseCase:
+def get_list_docs_uc(session: DBSession) -> ListDocumentsUseCase:
     return ListDocumentsUseCase(DocumentRepository(session))
 
 
-def get_delete_doc_uc(
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> DeleteDocumentUseCase:
-    return DeleteDocumentUseCase(DocumentRepository(session), _vector_store)
+def get_delete_doc_uc(session: DBSession) -> DeleteDocumentUseCase:
+    return DeleteDocumentUseCase(
+        DocumentRepository(session),
+        get_vector_store(),
+    )
 
 
-def get_job_status_uc(
-    session: Annotated[AsyncSession, Depends(get_db_session)],
-) -> GetJobStatusUseCase:
+def get_job_status_uc(session: DBSession) -> GetJobStatusUseCase:
     return GetJobStatusUseCase(JobRepository(session))
 
 
 def get_ask_question_uc() -> AskQuestionUseCase:
-    rewriter = QueryRewriter(_llm_router)
-    retriever = RetrieverAgent(_embedder, _vector_store, _reranker)
-    analyst = AnalystAgent(_llm_router)
-    answer = AnswerAgent(_llm_router)
+    rewriter = QueryRewriter(get_llm())
+    retriever = RetrieverAgent(
+        get_embedder(),
+        get_vector_store(),
+        get_reranker(),
+    )
+    analyst = AnalystAgent(get_llm())
+    answer = AnswerAgent(get_llm())
     verifier = CitationVerifier()
-    orchestrator = Orchestrator(rewriter, retriever, analyst, answer, verifier)
+
+    orchestrator = Orchestrator(
+        rewriter,
+        retriever,
+        analyst,
+        answer,
+        verifier,
+    )
+
     return AskQuestionUseCase(orchestrator)

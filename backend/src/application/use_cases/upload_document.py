@@ -8,7 +8,6 @@ from src.domain.entities.job import Job, JobStatus
 from src.domain.ports.document_repository import DocumentRepository
 from src.domain.ports.job_repository import JobRepository
 from src.domain.value_objects.document_id import DocumentId
-from src.infrastructure.queue.tasks import ingest_document_task
 
 
 class UploadDocumentUseCase:
@@ -45,6 +44,8 @@ class UploadDocumentUseCase:
         await self.job_repo.save(job)
 
         # 5. Enqueue Task
+        from src.infrastructure.queue.tasks import ingest_document_task
+
         ingest_document_task.delay(str(doc_id), str(save_path))
 
         return doc, job

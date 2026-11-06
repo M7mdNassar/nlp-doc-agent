@@ -15,6 +15,8 @@ from src.domain.value_objects.document_id import DocumentId
 
 @pytest.fixture
 def api(monkeypatch):
+    pytest.importorskip("sentence_transformers")
+
     # Import the real routers without creating external clients or downloading models.
     from src.infrastructure.cache import exact_cache
     from src.infrastructure.embeddings import bge_adapter
