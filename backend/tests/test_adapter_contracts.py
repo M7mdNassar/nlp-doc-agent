@@ -17,6 +17,7 @@ from src.infrastructure.vector_store.schema import (
     SPARSE_VECTOR_NAME,
 )
 
+pytest.importorskip("sentence_transformers")
 
 def make_chunk():
     return Chunk(ChunkId.generate(), DocumentId.generate(), "test passage", 1)
