@@ -148,7 +148,7 @@ class QdrantAdapter(VectorStore):
                 )
             )
 
-        return EvidencePackage(chunks=chunks, diagnostics={"raw_results": len(chunks)})
+        return EvidencePackage(chunks=chunks, diagnostics={"raw_results": str(len(chunks))})
 
     async def delete_by_document(self, document_id: str) -> None:
         await self.client.delete(
