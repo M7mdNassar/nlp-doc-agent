@@ -14,7 +14,7 @@ from src.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
 logger = structlog.get_logger(__name__)
 
 
-@celery_app.task(name="ingest_document")
+@celery_app.task(name="ingest_document")  # type: ignore
 def ingest_document_task(document_id: str, file_path: str) -> None:
     """Celery task to run the async pipeline."""
     asyncio.run(_ingest_document_async(document_id, file_path))
