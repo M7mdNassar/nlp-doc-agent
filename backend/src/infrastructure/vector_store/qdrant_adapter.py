@@ -142,7 +142,7 @@ class QdrantAdapter(VectorStore):
                     id=ChunkId(original_chunk_id),
                     document_id=DocumentId(payload.get(PAYLOAD_DOC_ID, "")),
                     text=payload.get("text", ""),
-                    page=payload.get(PAYLOAD_PAGE, 0),
+                    page=int(payload.get(PAYLOAD_PAGE, 0)),
                     section=payload.get("section"),
                     parent_id=payload.get("parent_id"),
                 )
