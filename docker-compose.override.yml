@@ -4,7 +4,8 @@ services:
       target: development
     volumes:
       - ./backend:/app
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+      - /app/.venv
+    command: uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - ENV=development
 
@@ -13,7 +14,10 @@ services:
       target: development
     volumes:
       - ./backend:/app
-    command: watchmedo auto-restart --directory=./src --pattern=*.py --recursive -- celery -A src.worker.main worker --loglevel=info
+      - /app/.venv
+    command: uv run watchmedo auto-restart --directory=./src --pattern=*.py --recursive -- celery -A src.worker.main worker --loglevel=info
+    environment:
+      - ENV=development
 
   frontend:
     build:
