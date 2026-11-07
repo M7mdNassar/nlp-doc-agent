@@ -12,15 +12,15 @@ class AnswerAgent:
     def _build_prompt(self, question: str, evidence: EvidencePackage) -> str:
         context = ""
         for chunk in evidence.chunks:
-            # We use the format [doc_name, p. X] to match our Citation Verifier
-            context += f"Source [p. {chunk.page}]: {chunk.text}\n\n"
+            # Inject the actual doc_id and page so the LLM can cite it correctly
+            context += f"Document ID: {chunk.document_id} | Page: {chunk.page}\nText: {chunk.text}\n\n"
         return f"Context:\n{context}\n\nQuestion: {question}"
 
     async def generate(self, question: str, evidence: EvidencePackage) -> str:
         system = """You are a helpful assistant. Answer the question using ONLY the provided context.
-You MUST cite your sources using the format [doc_id, p. page_number] exactly as shown in the context.
-If the context does not contain the answer, say "I don't have enough information."
-Do not use outside knowledge."""
+        You MUST cite your sources using the EXACT format: [doc_..., p. page_number]. 
+        Example: [doc_1234abcd, p. 5]
+        Do not use outside knowledge. If the context does not contain the answer, say "I don't have enough information."""
 
         prompt = self._build_prompt(question, evidence)
         budget = TokenBudget(max_tokens=1000)
@@ -28,8 +28,9 @@ Do not use outside knowledge."""
 
     async def stream(self, question: str, evidence: EvidencePackage) -> AsyncGenerator[str, None]:
         system = """You are a helpful assistant. Answer the question using ONLY the provided context.
-You MUST cite your sources using the format [doc_id, p. page_number] exactly as shown in the context."""
-
+        You MUST cite your sources using the EXACT format: [doc_..., p. page_number]. 
+        Example: [doc_1234abcd, p. 5]
+        Do not use outside knowledge. If the context does not contain the answer, say "I don't have enough information."""
         prompt = self._build_prompt(question, evidence)
         budget = TokenBudget(max_tokens=1000)
 

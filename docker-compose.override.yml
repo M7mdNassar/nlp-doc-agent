@@ -3,9 +3,11 @@ services:
     build:
       target: development
     volumes:
-      - ./backend:/app
-      - /app/.venv
-    command: uv run uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+      - ./backend/src:/app/src
+      - ./backend/alembic.ini:/app/alembic.ini
+      - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/uv.lock:/app/uv.lock
+    command: uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       - ENV=development
 
@@ -13,19 +15,10 @@ services:
     build:
       target: development
     volumes:
-      - ./backend:/app
-      - /app/.venv
-    command: uv run watchmedo auto-restart --directory=./src --pattern=*.py --recursive -- celery -A src.worker.main worker --loglevel=info
+      - ./backend/src:/app/src
+      - ./backend/alembic.ini:/app/alembic.ini
+      - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/uv.lock:/app/uv.lock
+    command: celery -A src.worker.main worker --loglevel=info
     environment:
       - ENV=development
-
-  frontend:
-    build:
-      target: development
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-      - /app/.next
-    command: npm run dev
-    environment:
-      - NODE_ENV=development
