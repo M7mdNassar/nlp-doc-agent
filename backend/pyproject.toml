@@ -22,7 +22,6 @@ dependencies = [
     "opentelemetry-sdk>=1.22.0",
     "httpx>=0.26.0",
     "python-multipart>=0.0.7",
-
     # Ingestion & Parsing
     "pypdf>=4.0.1",
     "python-docx>=1.1.0",
@@ -41,7 +40,6 @@ ml = [
     "pandas>=2.2.0",
 ]
 
-[dependency-groups]
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.4",
@@ -50,7 +48,6 @@ dev = [
     "import-linter>=2.0",
     "watchdog>=4.0.0",
     "types-aiofiles>=25.1.0.20261107",
-    "types-numexpr>=2.8.0",
 ]
 
 [tool.uv]

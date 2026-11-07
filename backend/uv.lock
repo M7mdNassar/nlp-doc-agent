@@ -1022,14 +1022,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-ml = [
-    { name = "pandas" },
-    { name = "rank-bm25" },
-    { name = "sentence-transformers", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
-    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
-]
-
-[package.dev-dependencies]
 dev = [
     { name = "import-linter" },
     { name = "mypy" },
@@ -1038,6 +1030,12 @@ dev = [
     { name = "ruff" },
     { name = "types-aiofiles" },
     { name = "watchdog" },
+]
+ml = [
+    { name = "pandas" },
+    { name = "rank-bm25" },
+    { name = "sentence-transformers", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
+    { name = "torch", marker = "platform_machine != 'x86_64' or sys_platform != 'darwin'" },
 ]
 
 [package.metadata]
@@ -1050,6 +1048,8 @@ requires-dist = [
     { name = "fastembed", specifier = ">=0.9.1" },
     { name = "groq", specifier = ">=1.7.0" },
     { name = "httpx", specifier = ">=0.26.0" },
+    { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8.0" },
     { name = "numexpr", specifier = ">=2.14.2" },
     { name = "onnxruntime", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", specifier = "==1.23.2" },
     { name = "opentelemetry-api", specifier = ">=1.22.0" },
@@ -1059,29 +1059,23 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.6.0" },
     { name = "pydantic-settings", specifier = ">=2.1.0" },
     { name = "pypdf", specifier = ">=4.0.1" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.4" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-multipart", specifier = ">=0.0.7" },
     { name = "qdrant-client", specifier = ">=1.7.0" },
     { name = "rank-bm25", marker = "extra == 'ml'", specifier = ">=0.2.2" },
     { name = "redis", specifier = ">=5.0.1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.14" },
     { name = "sentence-transformers", marker = "(platform_machine != 'x86_64' and extra == 'ml') or (sys_platform != 'darwin' and extra == 'ml')", specifier = ">=2.5.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.25" },
     { name = "structlog", specifier = ">=24.1.0" },
     { name = "torch", marker = "(platform_machine != 'x86_64' and extra == 'ml') or (sys_platform != 'darwin' and extra == 'ml')", specifier = ">=2.6.0" },
+    { name = "types-aiofiles", marker = "extra == 'dev'", specifier = ">=25.1.0.20261107" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
+    { name = "watchdog", marker = "extra == 'dev'", specifier = ">=4.0.0" },
 ]
-provides-extras = ["ml"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "import-linter", specifier = ">=2.0" },
-    { name = "mypy", specifier = ">=1.8.0" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23.4" },
-    { name = "ruff", specifier = ">=0.1.14" },
-    { name = "types-aiofiles", specifier = ">=25.1.0.20261107" },
-    { name = "watchdog", specifier = ">=4.0.0" },
-]
+provides-extras = ["ml", "dev"]
 
 [[package]]
 name = "numexpr"
