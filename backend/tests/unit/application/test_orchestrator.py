@@ -5,13 +5,14 @@ import pytest
 from src.application.agents.analyst.analyst_agent import AnalysisResult
 from src.application.agents.orchestrator.orchestrator import Orchestrator, State
 from src.domain.entities.evidence import EvidencePackage
+from src.domain.value_objects.rewritten_query import RewrittenQuery  # <--- New Import
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_happy_path(sample_chunks, mock_llm):
-    # Setup Mocks
+async def test_orchestrator_happy_path(sample_chunks):
     mock_rewriter = AsyncMock()
-    mock_rewriter.rewrite.return_value = "rewritten query"
+    # Mock the new object structure
+    mock_rewriter.rewrite.return_value = RewrittenQuery(query="rewritten query", filters={})
 
     mock_retriever = AsyncMock()
     mock_retriever.retrieve.return_value = EvidencePackage(chunks=sample_chunks)
@@ -23,7 +24,7 @@ async def test_orchestrator_happy_path(sample_chunks, mock_llm):
     mock_answer.generate.return_value = "The answer is 95% [doc_123456789, p. 1]."
 
     mock_verifier = MagicMock()
-    mock_verifier.verify_and_fix.side_effect = lambda x, y: x  # Pass-through
+    mock_verifier.verify_and_fix.side_effect = lambda x, y: x
 
     orchestrator = Orchestrator(
         mock_rewriter, mock_retriever, mock_analyst, mock_answer, mock_verifier
@@ -38,10 +39,9 @@ async def test_orchestrator_happy_path(sample_chunks, mock_llm):
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_feedback_loop(sample_chunks, mock_llm):
-    # Setup Mocks
+async def test_orchestrator_feedback_loop(sample_chunks):
     mock_rewriter = AsyncMock()
-    mock_rewriter.rewrite.return_value = "rewritten query"
+    mock_rewriter.rewrite.return_value = RewrittenQuery(query="rewritten query", filters={})
 
     mock_retriever = AsyncMock()
     mock_retriever.retrieve.return_value = EvidencePackage(chunks=sample_chunks)
@@ -64,6 +64,6 @@ async def test_orchestrator_feedback_loop(sample_chunks, mock_llm):
 
     result = await orchestrator.process("What is the accuracy?")
 
-    assert result["loops"] == 1  # It looped once
+    assert result["loops"] == 1
     assert mock_analyst.analyze.call_count == 2
     assert mock_retriever.retrieve.call_count == 2

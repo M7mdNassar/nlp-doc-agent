@@ -1,4 +1,3 @@
-
 from collections.abc import AsyncGenerator
 
 from src.domain.entities.evidence import EvidencePackage
@@ -29,8 +28,7 @@ If the context does not contain the answer, say:
         for chunk in evidence.chunks:
             # Include the actual document ID and page for accurate citations.
             context += (
-                f"Document ID: {chunk.document_id} | Page: {chunk.page}\n"
-                f"Text: {chunk.text}\n\n"
+                f"Document ID: {chunk.document_id} | Page: {chunk.page}\nText: {chunk.text}\n\n"
             )
 
         return f"Context:\n{context}\nQuestion: {question}"

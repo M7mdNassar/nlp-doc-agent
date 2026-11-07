@@ -1,5 +1,4 @@
 from enum import Enum
-from typing import Any
 
 import structlog
 
@@ -35,26 +34,27 @@ class Orchestrator:
         self.answer_agent = answer_agent
         self.verifier = verifier
 
-    async def process(
-        self, question: str, filters: dict[str, Any] | None = None
-    ) -> dict[str, str | int]:
+    async def process(self, question: str) -> dict[str, str | int]:
         state = State.RECEIVED
         evidence = EvidencePackage()
         max_loops = 2
         loop_count = 0
         current_query = question
+        filters = {}
 
         while loop_count < max_loops:
-            # 1. Rewrite
+            # 1. Rewrite (Only on first loop)
             if loop_count == 0:
-                current_query = await self.rewriter.rewrite(question)
-                logger.info(f"Rewritten query: {current_query}")
+                rewritten = await self.rewriter.rewrite(question)
+                current_query = rewritten.query
+                filters = rewritten.filters
+                logger.info(f"Rewritten query: {current_query} | Filters: {filters}")
 
             # 2. Retrieve
             evidence = await self.retriever.retrieve(current_query, filters)
             state = State.RETRIEVED
 
-            # 3. Analyze
+            # 3. Analyze (Tool Loop happens inside)
             analysis = await self.analyst.analyze(question, evidence)
             state = State.ANALYZED
 
@@ -63,7 +63,6 @@ class Orchestrator:
                 break
             else:
                 logger.warning(f"Analyst rejected evidence. Missing: {analysis.missing_info}")
-                # If missing info, use it as the new query for the next loop
                 current_query = f"{question} {analysis.missing_info}"
                 loop_count += 1
 
