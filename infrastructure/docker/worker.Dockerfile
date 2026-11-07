@@ -8,7 +8,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uv/bin/
-ENV PATH="/uv/bin:$PATH"
+
+ENV PATH="/uv/bin:/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
@@ -22,5 +23,4 @@ COPY backend/pyproject.toml backend/uv.lock* /app/
 RUN uv sync --no-dev
 COPY backend/ /app/
 
-# The command is overridden in docker-compose, but default to celery
 CMD ["celery", "-A", "src.worker.main", "worker", "--loglevel=info"]

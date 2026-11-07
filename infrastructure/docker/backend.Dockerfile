@@ -1,6 +1,6 @@
 FROM python:3.12-slim AS base
 
-# Install system dependencies (curl for healthcheck, tesseract for OCR later)
+# Install system dependencies
 RUN apt-get update && apt-get install -y \
     curl \
     tesseract-ocr \
@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y \
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uv/bin/
-ENV PATH="/uv/bin:$PATH"
+
+ENV PATH="/uv/bin:/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
