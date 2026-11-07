@@ -16,7 +16,7 @@ class GroqAdapter(LLMClient):
     def __init__(self) -> None:
         self.client = AsyncGroq(api_key=settings.GROQ_API_KEY)
         # Using standard production models
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "openai/gpt-oss-120b"
 
     @async_retry(max_retries=3)
     async def generate(self, prompt: str, system: str, budget: TokenBudget) -> str:
