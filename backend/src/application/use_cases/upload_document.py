@@ -2,6 +2,8 @@ import hashlib
 import uuid
 from pathlib import Path
 
+import aiofiles
+
 from src.core.config import settings
 from src.domain.entities.document import Document, DocumentStatus
 from src.domain.entities.job import Job, JobStatus
@@ -18,16 +20,26 @@ class UploadDocumentUseCase:
     async def execute(
         self, file_name: str, file_type: str, file_bytes: bytes
     ) -> tuple[Document, Job]:
-        # 1. Checksum & Deduplication
+        # 1. Checksum & Deduplication Check
         checksum = hashlib.sha256(file_bytes).hexdigest()
-        # (In a real app, check if checksum exists in doc_repo and short-circuit)
+
+        existing_doc = await self.doc_repo.get_by_checksum(checksum)
+        if existing_doc:
+            # If the document already exists, return it and create a completed job
+            # so the frontend knows it's ready to use.
+            dummy_job = Job(
+                job_id=str(uuid.uuid4()), document_id=existing_doc.id, status=JobStatus.COMPLETED
+            )
+            await self.job_repo.save(dummy_job)
+            return existing_doc, dummy_job
 
         # 2. Save file to disk
         doc_id = DocumentId.generate()
         save_path = Path(settings.DATA_DIR) / "uploads" / f"{doc_id}.{file_type}"
         save_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(save_path, "wb") as f:
-            f.write(file_bytes)
+
+        async with aiofiles.open(save_path, "wb") as f:
+            await f.write(file_bytes)
 
         # 3. Create Domain Entities
         doc = Document(

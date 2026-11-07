@@ -61,6 +61,26 @@ class DocumentRepository(IDocumentRepository):
             created_at=model.created_at,
         )
 
+    async def get_by_checksum(self, checksum: str) -> Document | None:
+        stmt = select(DocumentModel).where(DocumentModel.checksum == checksum)
+        result = await self.session.execute(stmt)
+        model = result.scalar_one_or_none()
+
+        if not model:
+            return None
+
+        return Document(
+            id=DocumentId(model.id),
+            name=model.name,
+            file_type=model.file_type,
+            checksum=model.checksum,
+            status=DocumentStatus(model.status),
+            page_count=model.page_count,
+            error_message=model.error_message,
+            access_tags=model.access_tags.split(",") if model.access_tags else [],
+            created_at=model.created_at,
+        )
+
     async def list_all(self) -> list[Document]:
         stmt = select(DocumentModel)
         result = await self.session.execute(stmt)
