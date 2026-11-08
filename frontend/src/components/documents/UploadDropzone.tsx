@@ -30,10 +30,10 @@ export function UploadDropzone() {
       onDrop={onDrop}
       onClick={() => fileInputRef.current?.click()}
       className={cn(
-        "relative flex flex-col items-center justify-center w-full h-48 border-2 border-dashed rounded-xl cursor-pointer transition-all duration-200",
-        isDragging 
-          ? "border-teal-500 bg-teal-50/50 dark:bg-teal-900/20" 
-          : "border-slate-300 hover:border-teal-400 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-900",
+        "relative flex flex-col items-center justify-center w-full h-56 border-2 border-dashed rounded-2xl cursor-pointer transition-all duration-300 overflow-hidden group bg-white dark:bg-slate-900/50 shadow-sm hover:shadow-md",
+        isDragging
+          ? "border-teal-500 bg-teal-50/80 dark:bg-teal-900/20 scale-[1.02]"
+          : "border-slate-300 hover:border-teal-400 dark:border-slate-700",
         isPending && "opacity-50 pointer-events-none"
       )}
     >
@@ -46,21 +46,21 @@ export function UploadDropzone() {
           if (e.target.files?.length) handleFile(e.target.files[0]);
         }}
       />
-      
+
       {isPending ? (
-        <div className="flex flex-col items-center text-teal-600">
-          <Loader2 className="w-10 h-10 mb-4 animate-spin" />
-          <p className="text-sm font-medium">Uploading document...</p>
+        <div className="flex flex-col items-center text-teal-600 animate-pulse">
+          <Loader2 className="w-12 h-12 mb-4 animate-spin" />
+          <p className="text-sm font-semibold tracking-wide">Uploading document...</p>
         </div>
       ) : (
-        <div className="flex flex-col items-center text-slate-500">
-          <div className="p-3 bg-white dark:bg-slate-800 rounded-full shadow-sm mb-4">
-            <UploadCloud className="w-8 h-8 text-teal-600" />
+        <div className="flex flex-col items-center text-slate-500 z-10">
+          <div className="p-4 bg-teal-50 dark:bg-slate-800 rounded-2xl shadow-sm mb-5 group-hover:scale-110 transition-transform duration-300 group-hover:-translate-y-1">
+            <UploadCloud className="w-8 h-8 text-teal-600 dark:text-teal-400" />
           </div>
-          <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+          <p className="text-base font-semibold text-slate-800 dark:text-slate-200">
             Click to upload or drag and drop
           </p>
-          <p className="text-xs text-slate-400 mt-1">PDF, DOCX, TXT, or MD (max 50MB)</p>
+          <p className="text-sm text-slate-400 mt-2 font-medium">PDF, DOCX, TXT, or MD (max 50MB)</p>
         </div>
       )}
     </div>
