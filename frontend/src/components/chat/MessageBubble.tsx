@@ -5,7 +5,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Message } from "@/hooks/useChat";
 import { formatTextWithCitations, CitationMatch } from "@/lib/chat-utils";
-import { Bot, User } from "lucide-react";
+import { Bot, User, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/components/ui/use-toast";
 
@@ -21,40 +21,35 @@ export function MessageBubble({ message }: { message: Message }) {
     });
   };
 
-  // Split text into chunks so Markdown still works, but citations are React elements
-  // (A simplified approach: render text with citations first, then pass to Markdown)
-  // For simplicity in this demo, we will parse citations directly in the text.
-  
   return (
-    <div className={cn("flex w-full mb-6", isUser ? "justify-end" : "justify-start")}>
+    <div className={cn("flex w-full mb-8 animate-fade-in", isUser ? "justify-end" : "justify-start")}>
       <div className={cn("flex gap-4 max-w-[85%]", isUser ? "flex-row-reverse" : "flex-row")}>
-        
+
         {/* Avatar */}
         <div className={cn(
-          "flex items-center justify-center w-8 h-8 rounded-full shrink-0 mt-1",
-          isUser ? "bg-slate-200 text-slate-600" : "bg-teal-100 text-teal-700"
+          "flex items-center justify-center w-9 h-9 rounded-xl shrink-0 mt-1 shadow-sm",
+          isUser ? "bg-slate-800 text-slate-100" : "bg-gradient-to-br from-teal-400 to-teal-600 text-white"
         )}>
-          {isUser ? <User className="w-5 h-5" /> : <Bot className="w-5 h-5" />}
+          {isUser ? <User className="w-5 h-5" /> : <Sparkles className="w-5 h-5" />}
         </div>
 
         {/* Bubble */}
         <div className={cn(
-          "px-5 py-3.5 rounded-2xl text-sm leading-relaxed",
-          isUser 
-            ? "bg-teal-600 text-white rounded-tr-sm shadow-sm" 
-            : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-sm shadow-sm"
+          "px-5 py-4 rounded-2xl text-[15px] leading-relaxed shadow-sm",
+          isUser
+            ? "bg-slate-800 text-white rounded-tr-sm"
+            : "bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 rounded-tl-sm"
         )}>
           {isUser ? (
             <p className="whitespace-pre-wrap">{message.content}</p>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none prose-table:border prose-table:border-slate-200 prose-th:bg-slate-50 prose-th:p-2 prose-td:p-2 prose-td:border-t prose-td:border-slate-200">
-              <ReactMarkdown 
+            <div className="prose prose-sm md:prose-base dark:prose-invert max-w-none prose-table:border prose-table:border-slate-200 prose-th:bg-slate-50 prose-th:p-3 prose-td:p-3 prose-td:border-t prose-td:border-slate-200 prose-a:text-teal-600">
+              <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
                   p: ({ children }) => {
-                    // Intercept paragraph text to inject citation chips
                     return (
-                      <p>
+                      <p className="mb-4 last:mb-0">
                         {Children.map(children, (child) => {
                           if (typeof child === "string") {
                             return formatTextWithCitations(child, handleCitationClick);
