@@ -3,7 +3,6 @@ import { Document } from "@/lib/api";
 import { IngestionStatusBadge } from "./IngestionStatusBadge";
 import { useDeleteDocument } from "@/hooks/useDocuments";
 import { Button } from "@/components/ui/button";
-import { formatDistanceToNow } from "date-fns";
 
 export function DocumentCard({ doc }: { doc: Document }) {
   const { mutate: deleteDoc, isPending: isDeleting } = useDeleteDocument();

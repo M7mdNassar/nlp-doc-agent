@@ -29,8 +29,12 @@ export function useChat() {
         content: response.answer,
       };
       setMessages((prev) => [...prev, assistantMsg]);
-    } catch (err: any) {
-      setError(err.message || "Failed to get a response from the agents.");
+    } catch (err: unknown) {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Failed to get a response from the agents."
+      );
     } finally {
       setIsLoading(false);
     }

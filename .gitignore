@@ -231,6 +231,8 @@ __marimo__/
 node_modules/
 .next/
 out/
+# Keep frontend source utilities despite the Python lib/ rule above.
+!/frontend/src/lib/
 # Database & Data
 data/
 *.sqlite

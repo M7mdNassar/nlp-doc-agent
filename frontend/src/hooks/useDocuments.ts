@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, Document } from "@/lib/api";
+import { api } from "@/lib/api";
 
 export function useDocuments() {
   return useQuery({

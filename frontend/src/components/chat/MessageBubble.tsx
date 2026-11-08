@@ -1,12 +1,13 @@
 "use client";
 
+import { Children } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Message } from "@/hooks/useChat";
 import { formatTextWithCitations, CitationMatch } from "@/lib/chat-utils";
-import { Bot, User, BookOpen } from "lucide-react";
+import { Bot, User } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useToast } from "@/components/ui/use-toast"; // Assuming you have toast setup
+import { useToast } from "@/components/ui/use-toast";
 
 export function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
@@ -54,7 +55,7 @@ export function MessageBubble({ message }: { message: Message }) {
                     // Intercept paragraph text to inject citation chips
                     return (
                       <p>
-                        {React.Children.map(children, (child) => {
+                        {Children.map(children, (child) => {
                           if (typeof child === "string") {
                             return formatTextWithCitations(child, handleCitationClick);
                           }
