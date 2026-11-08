@@ -16,7 +16,7 @@ class GroqAdapter(LLMClient):
     def __init__(self) -> None:
         self.client = AsyncGroq(api_key=settings.GROQ_API_KEY)
         # Using standard production models
-        self.model = "openai/gpt-oss-120b"
+        self.model = settings.LLM_MODEL
 
     @async_retry(max_retries=3)
     async def generate(self, prompt: str, system: str, budget: TokenBudget) -> str:
@@ -30,6 +30,8 @@ class GroqAdapter(LLMClient):
             max_tokens=budget.remaining,
         )
         content = response.choices[0].message.content or ""
+        if response.choices[0].finish_reason != "stop" or not content.strip():
+            raise ValueError("LLM completion was incomplete or empty")
         return content
 
     async def stream(

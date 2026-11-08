@@ -2,7 +2,10 @@ import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from src.api.routers import chat, documents, health, jobs
+from src.api.routers.chat import router as chat_router
+from src.api.routers.documents import router as documents_router
+from src.api.routers.health import router as health_router
+from src.api.routers.jobs import router as jobs_router
 from src.core.constants import APP_NAME
 from src.core.errors import AppError
 from src.core.logging import setup_logging
@@ -24,10 +27,10 @@ def create_app() -> FastAPI:
         )
 
     # Include Routers
-    app.include_router(health.router, tags=["Health"])
-    app.include_router(documents.router, prefix="/documents", tags=["Documents"])
-    app.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
-    app.include_router(chat.router, prefix="/chat", tags=["Chat"])
+    app.include_router(health_router, tags=["Health"])
+    app.include_router(documents_router, prefix="/documents", tags=["Documents"])
+    app.include_router(jobs_router, prefix="/jobs", tags=["Jobs"])
+    app.include_router(chat_router, prefix="/chat", tags=["Chat"])
 
     return app
 

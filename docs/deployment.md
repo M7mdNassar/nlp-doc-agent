@@ -1,165 +1,114 @@
-# Deployment
+# Backend deployment and upgrade
 
-This document explains how to run NLP Doc Chat with Docker Compose, configure its environment, manage persistent data, and understand the current deployment and scaling approach.
+The frontend is excluded from these commands. Run commands from the repository root unless stated otherwise.
 
-## Table of Contents
+## Configuration
 
-- [Overview](#overview)
-- [Services](#services)
-- [Persistent Volumes](#persistent-volumes)
-- [Local Development](#local-development)
-- [Production Profile](#production-profile)
-- [Environment Variables](#environment-variables)
-- [Healthchecks and Startup Order](#healthchecks-and-startup-order)
-- [Backups](#backups)
-- [First Run](#first-run)
-- [Resetting the Environment](#resetting-the-environment)
-- [Scaling Considerations](#scaling-considerations)
+Keep your existing .env. If starting fresh, PowerShell:
 
-## Overview
+    if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 
-NLP Doc Chat runs under a single Docker Compose stack. The stack contains five services:
+Set GROQ_API_KEY in .env. The existing key remains usable; no new provider account is required.
+LLM_MODEL defaults to openai/gpt-oss-120b.
+Docker uses QDRANT_URL=http://qdrant:6333, REDIS_URL=redis://redis:6379/0,
+DATABASE_URL=sqlite+aiosqlite:///./data/app.db, and DATA_DIR=/app/data.
 
-1. `frontend` — the Next.js user interface and SSE bridge.
-2. `backend` — the FastAPI application.
-3. `worker` — the Celery worker that processes document ingestion tasks.
-4. `qdrant` — the vector store.
-5. `redis` — the cache, lock manager, and Celery message broker.
+## Existing installation
 
-## Services
+The update changes Python source, the database schema, and production image dependencies. Rebuild/recreate the backend and worker. The new one-shot migrate service runs Alembic before they start.
 
-| Service | Image | Purpose |
-|---|---|---|
-| `frontend` | Built from `infrastructure/docker/frontend.Dockerfile` | Next.js UI and SSE bridge. |
-| `backend` | Built from `infrastructure/docker/backend.Dockerfile` | FastAPI application. |
-| `worker` | Built from `infrastructure/docker/worker.Dockerfile` | Celery worker for asynchronous document ingestion. |
-| `qdrant` | Official `qdrant/qdrant` image | Vector store. |
-| `redis` | Official `redis` image | Cache, locks, and message broker. |
+Preserve a database copy before upgrading. After stopping API/worker writes, this command creates a timestamped backup inside the persistent data volume:
 
-## Persistent Volumes
+    docker compose -f docker-compose.yml stop backend worker
+    docker compose -f docker-compose.yml run --rm --no-deps --entrypoint python backend -c "import datetime,sqlite3; from src.core.config import settings; from sqlalchemy.engine import make_url; p=make_url(settings.DATABASE_URL).database; s=sqlite3.connect(p); d=sqlite3.connect(p+'.backup-'+datetime.datetime.now().strftime('%Y%m%d-%H%M%S')); s.backup(d); d.close(); s.close()"
+    docker compose -f docker-compose.yml up -d --build qdrant redis migrate backend worker
 
-Persistent data is stored in named Docker volumes:
+No volume reset is needed. Do not run docker compose down -v or make reset for this upgrade.
 
-| Volume | Container path | Purpose |
-|---|---|---|
-| `qdrant_data` | `/qdrant/storage` | Qdrant vector-store data. |
-| `redis_data` | `/data` | Redis data. |
-| `data_uploads` | `/app/data/uploads` | Uploaded files. |
-| `data_sqlite` | `/app/data/sqlite` | SQLite database files. |
+Check startup:
 
-## Local Development
+    docker compose -f docker-compose.yml ps -a
+    docker compose -f docker-compose.yml logs --tail=100 migrate backend worker
+    Invoke-RestMethod http://localhost:8000/health
 
-Start the services with:
+A successful migrate container exits with code 0; that is expected.
+The health response should report SQLite/Qdrant/Redis as ok, but it does not verify Groq credentials.
 
-```bash
-cp .env.example .env
-make up
-```
+If you intentionally used a custom SQLite URL or upload directory, retain it consistently in .env for migrate/backend/worker. The migration now respects DATABASE_URL in online mode.
 
-Use the development target to enable hot reload:
+## Reindex existing uploads
 
-```bash
-make dev
-```
+Old indexed chunks lack the new metadata/table fields. Reindex existing documents after startup; uploading the same bytes again returns the existing document rather than reprocessing it.
 
-`make dev` loads `docker-compose.override.yml`, which mounts source directories and exposes additional ports.
+    $documents = Invoke-RestMethod http://localhost:8000/documents
+    $documents.items | Format-Table id,name,status
+    $job = Invoke-RestMethod -Method Post "http://localhost:8000/documents/<document-id>/reindex"
+    Invoke-RestMethod "http://localhost:8000/jobs/$($job.job_id)"
 
-## Production Profile
+Replace <document-id> with an actual ID. Repeat for existing documents. Wait for completed before chatting. If failed, inspect error and the worker logs. The stored upload must still be present in the shared uploads volume. An active job must finish before another reindex is accepted.
 
-The production profile differs from the development setup in the following ways:
+Reindexing changes chunk IDs, so old answers in conversation history retain historical references. New questions use newly retrieved evidence.
 
-- Source directories are not mounted into containers. Images are built once and deployed.
-- Qdrant, Redis, and the backend are bound to loopback only.
-- The frontend is the only externally reachable service.
-- Images are pinned to specific tags and digests in `docker-compose.yml`.
-- Secrets are injected through environment variables from a secret manager, not from a file.
+## Start a new installation
 
-## Environment Variables
+    docker compose -f docker-compose.yml up -d --build qdrant redis migrate backend worker
 
-The `.env.example` file is the canonical list of environment variables. Keep it up to date whenever configuration changes.
+The migration service creates the schema on first run. Use http://localhost:8000/docs to upload a PDF/DOCX/TXT/Markdown file. Poll the returned job until completed, then POST /chat.
 
-| Variable | Purpose | Default or notes |
-|---|---|---|
-| `GROQ_API_KEY` | Groq API key. | Backend only. |
-| `CEREBRAS_API_KEY` | Fallback LLM provider API key. | — |
-| `OPENROUTER_API_KEY` | Secondary fallback provider API key. | — |
-| `JWT_SECRET` | Signing key for user sessions. | — |
-| `QDRANT_URL` | Qdrant endpoint. | `http://qdrant:6333` |
-| `REDIS_URL` | Redis connection URL. | `redis://redis:6379/0` |
-| `SQLITE_PATH` | Path to the SQLite database file. | — |
-| `DATA_DIR` | Root directory for uploads and parsed files. | — |
-| `EMBEDDING_MODEL` | Embedding model identifier. | `BAAI/bge-small-en-v1.5` |
-| `RERANKER_MODEL` | Reranker model identifier. | `BAAI/bge-reranker-base` |
-| `LOG_LEVEL` | Backend logging level. | `info` |
-| `NEXT_PUBLIC_API_URL` | API base URL exposed to the browser. | — |
+## Development with source mounts
 
-> **Important:** Variables prefixed with `NEXT_PUBLIC_` are exposed to the browser. Do not place secrets in these variables.
+    docker compose -f docker-compose.yml -f docker-compose.override.yml up -d --build qdrant redis migrate backend worker
 
-## Healthchecks and Startup Order
+Plain docker compose automatically includes the override file. Use the explicit base-file command above when you want production stages without source mounts.
 
-Each service has a healthcheck or readiness condition:
+## Local tests
 
-| Service | Healthcheck or readiness condition |
-|---|---|
-| `qdrant` | TCP probe on port `6333`. |
-| `redis` | `redis-cli ping`. |
-| `backend` | `GET /health` reports the status of each dependency. |
-| `frontend` | Readiness depends on the backend health endpoint. |
+    cd backend
+    uv sync --frozen --all-extras
+    uv run --no-sync ruff check .
+    uv run --no-sync mypy src
+    uv run --no-sync pytest -q
 
-Docker Compose uses `depends_on` with `condition: service_healthy` to enforce this startup order:
+No database migration or Docker stack is needed for the default test suite: it creates isolated test databases and runs the migrations itself.
 
-```text
-redis → qdrant → backend → worker → frontend
-```
+For a host-based backend, set DATABASE_URL to your SQLite file, DATA_DIR to a writable local directory, and QDRANT_URL/REDIS_URL to localhost. Set GROQ_API_KEY in the process environment or a backend/.env file, then:
 
-## Backups
+    uv run --no-sync alembic upgrade head
+    uv run --no-sync uvicorn src.main:app --host 127.0.0.1 --port 8000
 
-The current backup approach for each persistent volume is:
+Run the Celery worker in a separate terminal with the same settings. Docker is recommended for the worker on Windows.
 
-| Volume | Backup guidance |
-|---|---|
-| `qdrant_data` | Back up using Qdrant snapshots. |
-| `redis_data` | Contains cache data only; backups are not required. |
-| `data_uploads` | Back up the raw uploaded files. |
-| `data_sqlite` | Back up the SQLite database using `sqlite3 .backup`. |
+## Optional live smoke test
 
-Backups are not automated in v1. The `infrastructure/scripts/` directory is intended to host backup scripts as the system matures.
+After the Docker stack is running, copy and run the synthetic smoke script:
 
-## First Run
+    docker compose -f docker-compose.yml cp infrastructure/scripts/smoke_backend.py backend:/tmp/task7-smoke.py
+    docker compose -f docker-compose.yml exec -e PYTHONPATH=/app backend python /tmp/task7-smoke.py
 
-Start the stack, check its health, and optionally load sample documents:
+This uses actual embedding/reranking models and the configured Groq key, and therefore makes provider requests. All document/vector/SQL data for this test is temporary or in memory. It does not upload to or modify your application corpus. A successful run prints status=passed, mean=92, and a successful follow-up state.
 
-```bash
-make up
-make health
-make seed  # Optional: load sample documents
-```
+## LLM credentials and answer-quality check
 
-If `make health` reports `degraded`, inspect the failing dependency in the health response and check the relevant container logs:
+Compose reads GROQ_API_KEY from the repository-root .env and injects it into backend/worker.
+The backend's Settings reads that process environment; a backend/.env is only relevant when
+running Python directly from backend on the host. The application does not use a key from Codex.
+GroqAdapter calls AsyncGroq.chat.completions.create with settings.GROQ_API_KEY and LLM_MODEL
+(default openai/gpt-oss-120b). Embedding and reranking models run locally and do not need that key.
 
-```bash
-make logs
-```
+To run the optional synthetic qualification/unsupported-detail checks against Groq:
 
-## Resetting the Environment
+    docker compose -f docker-compose.yml cp infrastructure/scripts/smoke_answer_quality.py backend:/tmp/task7-quality-smoke.py
+    docker compose -f docker-compose.yml exec -e PYTHONPATH=/app backend python /tmp/task7-quality-smoke.py
 
-To reset the local environment, run:
+This makes provider requests using synthetic text only. It does not read uploaded documents or
+change the database. It checks incorrect drafts as well as a newly generated summary.
 
-```bash
-make reset
-```
+## Container changes
 
-> **Warning:** This command stops the stack, removes all named volumes, and starts the environment again from a clean state. It is destructive and intended for development only. Persistent data stored in those volumes will be removed.
-
-## Scaling Considerations
-
-The current setup is designed for a single developer or a small team running the system on one machine.
-
-Scaling to multiple backend instances will require:
-
-- Moving SQLite to a network database such as PostgreSQL.
-- Making the frontend and backend horizontally scalable behind a load balancer.
-- Ensuring Qdrant and Redis are reachable by all backend instances.
-- Moving session state out of individual backend processes.
-
-These changes are deferred until there is a concrete need. The intended direction is documented in the decision records.
+- Production backend and worker install uv sync --frozen --no-dev --extra ml --no-cache.
+- Development stages install all extras with the frozen lockfile and --no-cache.
+- Linux and Windows use CPU-only PyTorch from the official PyTorch CPU index. The refreshed lockfile excludes CUDA/NVIDIA dependencies; no GPU is required. macOS retains its PyPI source.
+- Disabling uv's download cache during image builds avoids retaining package archives in the image layers. Docker layer caching still works normally.
+- The migrate service runs alembic upgrade head and gates API/worker startup.
+- .env.example documents the existing required settings and optional LLM_MODEL/MAX_UPLOAD_BYTES.
+- The lockfile was regenerated for CPU-only PyTorch; use the committed pyproject.toml and uv.lock together.

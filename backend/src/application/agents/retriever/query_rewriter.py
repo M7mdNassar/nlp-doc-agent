@@ -14,7 +14,7 @@ class QueryRewriter:
         system = "You are a search query optimizer. Rewrite the user's question to be optimal for vector search. Resolve pronouns using the history if provided. Return ONLY the rewritten query, no other text."
         prompt = f"History:\n{history}\n\nQuestion: {query}" if history else f"Question: {query}"
 
-        budget = TokenBudget(max_tokens=100)
+        budget = TokenBudget(max_tokens=1024)
         try:
             rewritten = await self.llm.generate(prompt, system, budget)
             return rewritten.strip()

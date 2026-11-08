@@ -3,6 +3,7 @@ from pathlib import Path
 import structlog
 from fastembed import SparseTextEmbedding
 
+from src.domain.entities.document import DocumentStatus
 from src.domain.ports.chunk_repository import ChunkRepository
 from src.domain.ports.document_repository import DocumentRepository
 from src.domain.ports.embedder import Embedder
@@ -12,6 +13,7 @@ from src.domain.value_objects.sparse_vector import SparseVector
 from src.infrastructure.parsers.factory import parser_factory
 
 from .chunker import Chunker
+from .cleaner import clean_elements
 
 logger = structlog.get_logger(__name__)
 
@@ -28,53 +30,49 @@ class IngestionPipeline:
         self.chunk_repo = chunk_repo
         self.vector_store = vector_store
         self.embedder = embedder
-        self.chunker = Chunker()
-        # BM25 sparse embedding model
+        self.chunker = Chunker(
+            chunk_size=min(384, embedder.max_tokens - 2), count_tokens=embedder.count_tokens
+        )
         self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
 
     async def run(self, doc_id: DocumentId, file_path: str) -> None:
         doc = await self.doc_repo.get(doc_id)
         if not doc:
-            logger.error(f"Document {doc_id} not found.")
-            return
-
+            raise ValueError(f"Document {doc_id} not found")
         try:
-            # 1. Update Status: PARSING
+            # Retrying/reindexing uses the same document ID.
+            doc.status = DocumentStatus.QUEUED
+            doc.error_message = None
             doc.mark_parsing()
             await self.doc_repo.save(doc)
-
-            # 2. Parse
-            path = Path(file_path)
             parser = parser_factory.get_parser(doc.file_type)
-            elements = await parser.parse(path)  # Type is now list[ParsedElement]
-
-            # 3. Update Status: EMBEDDING
-            page_count = max([e.page for e in elements]) if elements else 1
-            doc.mark_embedding(page_count)
+            elements = clean_elements(await parser.parse(Path(file_path)))
+            if not elements:
+                raise ValueError(
+                    "No readable content found. Image-only PDFs require OCR before upload."
+                )
+            doc.mark_embedding(max(e.page for e in elements))
             await self.doc_repo.save(doc)
-
-            # 4. Chunk
             chunks = self.chunker.chunk(doc_id, elements)
-
-            # 5. Embed (Dense & Sparse)
+            for chunk in chunks:
+                chunk.document_name = doc.name
+                chunk.file_type = doc.file_type
             texts = [c.text for c in chunks]
             dense_vectors = await self.embedder.embed_documents(texts)
-
             sparse_embeddings = list(self.sparse_model.embed(texts))
             sparse_vectors = [
                 SparseVector(indices=e.indices.tolist(), values=e.values.tolist())
                 for e in sparse_embeddings
             ]
-
-            # 6. Store
+            # Compute successfully before replacing old data. A failed replacement is retryable.
+            await self.vector_store.delete_by_document(str(doc_id))
+            await self.chunk_repo.delete_by_document(doc_id)
             await self.chunk_repo.save_batch(chunks)
             await self.vector_store.upsert(chunks, dense_vectors, sparse_vectors)
-
-            # 7. Update Status: INDEXED
             doc.mark_indexed()
             await self.doc_repo.save(doc)
-
-        except Exception as e:
-            logger.error(f"Ingestion failed for {doc_id}: {e}")
-            doc.mark_failed(str(e))
+        except Exception as exc:
+            logger.error("ingestion_failed", document_id=str(doc_id), error=str(exc))
+            doc.mark_failed(str(exc))
             await self.doc_repo.save(doc)
+            raise

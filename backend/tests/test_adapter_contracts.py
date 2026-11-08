@@ -19,8 +19,25 @@ from src.infrastructure.vector_store.schema import (
 
 pytest.importorskip("sentence_transformers")
 
+
 def make_chunk():
     return Chunk(ChunkId.generate(), DocumentId.generate(), "test passage", 1)
+
+
+@pytest.mark.parametrize(
+    ("reason", "content"), [("length", '{"has_enough_evidence":true}'), ("stop", "")]
+)
+async def test_incomplete_or_empty_provider_output_is_rejected(monkeypatch, reason, content):
+    response = SimpleNamespace(
+        choices=[SimpleNamespace(finish_reason=reason, message=SimpleNamespace(content=content))]
+    )
+    client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=AsyncMock(return_value=response)))
+    )
+    monkeypatch.setattr(groq_adapter, "AsyncGroq", lambda **kwargs: client)
+    adapter = groq_adapter.GroqAdapter()
+    with pytest.raises(ValueError, match="incomplete or empty"):
+        await adapter.generate.__wrapped__(adapter, "q", "s", TokenBudget(100))
 
 
 async def test_groq_stream_is_directly_async_iterable(monkeypatch):

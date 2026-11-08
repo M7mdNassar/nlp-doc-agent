@@ -80,6 +80,13 @@ class DocumentRepository(IDocumentRepository):
             for m in models
         ]
 
+    async def get_by_checksum(self, checksum: str) -> Document | None:
+        result = await self.session.execute(
+            select(DocumentModel.id).where(DocumentModel.checksum == checksum)
+        )
+        doc_id = result.scalar_one_or_none()
+        return await self.get(DocumentId(doc_id)) if doc_id else None
+
     async def delete(self, doc_id: DocumentId) -> None:
         stmt = select(DocumentModel).where(DocumentModel.id == str(doc_id))
         result = await self.session.execute(stmt)

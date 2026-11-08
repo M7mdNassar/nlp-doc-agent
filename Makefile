@@ -10,42 +10,37 @@ help:
 	@echo "  make lint     - Run linters"
 	@echo "  make format   - Auto-format code"
 	@echo "  make codegen  - Generate TS client from OpenAPI"
-	@echo "  make seed     - Seed sample documents"
+	@echo "  make seed FILES=path - Upload files (paths relative to backend/)"
 	@echo "  make reset    - Wipe volumes and restart fresh"
 
 up:
-	docker compose up -d --build
+	docker compose -f docker-compose.yml up -d --build qdrant redis migrate backend worker
 
 down:
 	docker compose down
 
 dev:
-	docker compose -f docker-compose.yml -f docker-compose.override.yml up --build
+	docker compose -f docker-compose.yml -f docker-compose.override.yml up --build qdrant redis migrate backend worker
 
 logs:
 	docker compose logs -f
 
 test:
-	@echo "Running tests (will be implemented in later phases)"
-	# docker compose exec backend pytest
-	# docker compose exec frontend npm run test
+	cd backend && uv run --no-sync pytest
 
 lint:
-	@echo "Running linters (will be implemented in later phases)"
-	# docker compose exec backend ruff check .
-	# docker compose exec frontend npm run lint
+	cd backend && uv run --no-sync ruff check .
+	cd backend && uv run --no-sync mypy src
 
 format:
-	@echo "Running formatters (will be implemented in later phases)"
-	# docker compose exec backend ruff format .
-	# docker compose exec frontend npm run format
+	cd backend && uv run --no-sync ruff format .
 
 codegen:
 	@echo "Generating OpenAPI client (will be implemented in later phases)"
 	# docker compose exec frontend npx openapi-typescript-codegen ...
 
 seed:
-	docker compose exec backend python /app/infrastructure/scripts/seed_sample_documents.py
+	cd backend && uv run --no-sync python ../infrastructure/scripts/seed_sample_documents.py $(FILES)
 
 reset:
 	docker compose down -v

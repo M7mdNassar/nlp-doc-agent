@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.application.agents.analyst.analyst_agent import AnalystAgent
 from src.application.agents.answer.answer_agent import AnswerAgent
 from src.application.agents.orchestrator.orchestrator import Orchestrator
+from src.application.agents.retriever.context_selector import ContextSelector
 from src.application.agents.retriever.query_rewriter import QueryRewriter
 from src.application.agents.retriever.retriever_agent import RetrieverAgent
 from src.application.citations.verifier import CitationVerifier
@@ -16,6 +17,9 @@ from src.application.use_cases.get_job_status import GetJobStatusUseCase
 from src.application.use_cases.list_documents import ListDocumentsUseCase
 from src.application.use_cases.upload_document import UploadDocumentUseCase
 from src.infrastructure.relational.db import get_db_session
+from src.infrastructure.relational.repositories.conversation_repository import (
+    ConversationRepository,
+)
 from src.infrastructure.relational.repositories.document_repository import DocumentRepository
 from src.infrastructure.relational.repositories.job_repository import JobRepository
 
@@ -88,7 +92,7 @@ def get_job_status_uc(session: DBSession) -> GetJobStatusUseCase:
     return GetJobStatusUseCase(JobRepository(session))
 
 
-def get_ask_question_uc() -> AskQuestionUseCase:
+def get_ask_question_uc(session: DBSession) -> AskQuestionUseCase:
     rewriter = QueryRewriter(get_llm())
     retriever = RetrieverAgent(
         get_embedder(),
@@ -105,6 +109,11 @@ def get_ask_question_uc() -> AskQuestionUseCase:
         analyst,
         answer,
         verifier,
+        ContextSelector(
+            get_embedder().count_tokens, max_tokens=6000, max_chunks=16, per_document=8
+        ),
     )
 
-    return AskQuestionUseCase(orchestrator)
+    return AskQuestionUseCase(
+        orchestrator, ConversationRepository(session), DocumentRepository(session)
+    )

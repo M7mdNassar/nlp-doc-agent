@@ -7,6 +7,13 @@ class BGEAdapter(Embedder):
     def __init__(self) -> None:
         self.model = embedding_loader.load()
 
+    @property
+    def max_tokens(self) -> int:
+        return int(self.model.max_seq_length or 512)
+
+    def count_tokens(self, text: str) -> int:
+        return len(self.model.tokenizer.encode(text, add_special_tokens=True))
+
     async def embed_query(self, text: str) -> list[float]:
         # sentence-transformers is synchronous, run in threadpool in production
         # For v1 local, we accept the slight block

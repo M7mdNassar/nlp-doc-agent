@@ -58,7 +58,7 @@ async def test_chat_dependency_and_response(api, client):
 
     assert response.status_code == 200
     assert response.json() == result
-    uc.execute.assert_awaited_once_with("Question?")
+    uc.execute.assert_awaited_once_with("Question?", None, None)
 
 
 async def test_document_upload_uses_multipart_and_injected_use_case(api, client):
@@ -193,3 +193,50 @@ def test_openapi_registers_jobs_and_required_file(api):
     upload = schema["paths"]["/documents"]["post"]
     assert upload["requestBody"]["required"] is True
     assert "multipart/form-data" in upload["requestBody"]["content"]
+
+
+async def test_chat_forwards_conversation_and_validated_filters(api, client):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock(return_value={"answer": "ok"}))
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    response = await client.post(
+        "/chat",
+        json={
+            "message": "Question",
+            "conversation_id": "conv_test",
+            "filters": {"chapter": "4", "page": 2},
+        },
+    )
+    assert response.status_code == 200
+    args = uc.execute.await_args.args
+    assert args[:2] == ("Question", "conv_test")
+    assert args[2].model_dump(exclude_none=True) == {"chapter": "4", "page": 2}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"message": "   "},
+        {"message": "q", "filters": {"page": 0}},
+        {"message": "q", "filters": {"page": "2"}},
+        {"message": "q", "filters": {"unknown": "ignored?"}},
+    ],
+)
+async def test_chat_rejects_invalid_input_instead_of_ignoring_filters(api, client, body):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock())
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    assert (await client.post("/chat", json=body)).status_code == 422
+    uc.execute.assert_not_awaited()
+
+
+async def test_reindex_endpoint_returns_new_job(api, client):
+    app, providers = api
+    doc = Document(DocumentId.generate(), "existing.pdf", "pdf", "sum")
+    job = Job("job-reindex", doc.id)
+    uc = SimpleNamespace(reindex=AsyncMock(return_value=(doc, job)))
+    app.dependency_overrides[providers.get_upload_doc_uc] = lambda: uc
+    response = await client.post(f"/documents/{doc.id}/reindex")
+    assert response.status_code == 200
+    assert response.json()["job_id"] == "job-reindex"
+    uc.reindex.assert_awaited_once_with(doc.id)

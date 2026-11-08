@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +21,7 @@ class JobRepository(IJobRepository):
         if model:
             model.status = job.status.value
             model.error = job.error
+            model.updated_at = datetime.now(UTC)
         else:
             model = JobModel(
                 job_id=job.job_id,
@@ -45,3 +48,13 @@ class JobRepository(IJobRepository):
             error=model.error,
             updated_at=model.updated_at,
         )
+
+    async def latest_for_document(self, document_id: str) -> Job | None:
+        result = await self.session.execute(
+            select(JobModel.job_id)
+            .where(JobModel.document_id == document_id)
+            .order_by(JobModel.updated_at.desc())
+            .limit(1)
+        )
+        job_id = result.scalar_one_or_none()
+        return await self.get(job_id) if job_id else None

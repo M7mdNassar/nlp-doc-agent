@@ -8,6 +8,8 @@ from src.domain.ports.reranker import Reranker
 from src.domain.ports.vector_store import VectorStore
 from src.domain.value_objects.sparse_vector import SparseVector
 
+from .context_selector import ContextSelector
+
 
 class RetrieverAgent:
     def __init__(self, embedder: Embedder, vector_store: VectorStore, reranker: Reranker):
@@ -15,13 +17,14 @@ class RetrieverAgent:
         self.vector_store = vector_store
         self.reranker = reranker
         self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+        self.selector = ContextSelector(embedder.count_tokens)
 
     async def retrieve(self, query: str, filters: dict[str, Any] | None = None) -> EvidencePackage:
         # 1. Embed Query (Dense)
         dense_vector = await self.embedder.embed_query(query)
 
         # 2. Embed Query (Sparse)
-        sparse_embedding = list(self.sparse_model.embed([query]))[0]
+        sparse_embedding = list(self.sparse_model.query_embed(query))[0]
         sparse_vector = SparseVector(
             indices=sparse_embedding.indices.tolist(), values=sparse_embedding.values.tolist()
         )
@@ -38,6 +41,8 @@ class RetrieverAgent:
             return evidence
 
         # 4. Rerank (Top 20 -> Top 8)
-        reranked_chunks = await self.reranker.rerank(query, evidence.chunks, top_k=8)
+        reranked_chunks = await self.reranker.rerank(query, evidence.chunks, top_k=20)
 
-        return EvidencePackage(chunks=reranked_chunks, diagnostics=evidence.diagnostics)
+        return EvidencePackage.from_chunks(
+            self.selector.select(reranked_chunks), evidence.diagnostics
+        )

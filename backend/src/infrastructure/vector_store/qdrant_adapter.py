@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 import structlog
@@ -62,6 +63,10 @@ class QdrantAdapter(VectorStore):
                         "text": chunk.text,
                         "parent_id": chunk.parent_id,
                         PAYLOAD_ACCESS_TAGS: [],
+                        **chunk.metadata(),
+                        "name_key": chunk.document_name.casefold(),
+                        "author_key": chunk.author.casefold(),
+                        "section_key": self._section_key(chunk.section or ""),
                     },
                 )
             )
@@ -76,30 +81,9 @@ class QdrantAdapter(VectorStore):
         limit: int = 20,
     ) -> EvidencePackage:
 
-        qdrant_filter = None
-        if filters:
-            must_conditions = []
-            if "doc_id" in filters:
-                must_conditions.append(
-                    models.FieldCondition(
-                        key=PAYLOAD_DOC_ID, match=models.MatchValue(value=filters["doc_id"])
-                    )
-                )
-            if "page" in filters:
-                must_conditions.append(
-                    models.FieldCondition(
-                        key=PAYLOAD_PAGE, match=models.MatchValue(value=filters["page"])
-                    )
-                )
-            if "access_tags" in filters:
-                must_conditions.append(
-                    models.FieldCondition(
-                        key=PAYLOAD_ACCESS_TAGS, match=models.MatchAny(any=filters["access_tags"])
-                    )
-                )
-
-            if must_conditions:
-                qdrant_filter = models.Filter(must=must_conditions)
+        if filters.get("doc_ids") == []:
+            return EvidencePackage()
+        qdrant_filter = self._build_filter(filters)
 
         # Convert domain SparseVector to Qdrant SparseVector for the query
         qdrant_sparse_query = models.SparseVector(
@@ -129,7 +113,7 @@ class QdrantAdapter(VectorStore):
             )
         except Exception as e:
             logger.error(f"Qdrant hybrid search failed: {e}")
-            return EvidencePackage(diagnostics={"error": str(e)})
+            raise RuntimeError("Document retrieval is unavailable") from e
 
         chunks = []
         for point in response.points:
@@ -145,10 +129,79 @@ class QdrantAdapter(VectorStore):
                     page=int(payload.get(PAYLOAD_PAGE, 0)),
                     section=payload.get("section"),
                     parent_id=payload.get("parent_id"),
+                    **{
+                        key: payload[key]
+                        for key in (
+                            "document_name",
+                            "file_type",
+                            "author",
+                            "date",
+                            "chapter",
+                            "location",
+                            "table_data",
+                        )
+                        if key in payload
+                    },
                 )
             )
 
-        return EvidencePackage(chunks=chunks, diagnostics={"raw_results": str(len(chunks))})
+        return EvidencePackage.from_chunks(chunks, diagnostics={"raw_results": str(len(chunks))})
+
+    @staticmethod
+    def _build_filter(filters: dict[str, Any]) -> models.Filter | None:
+        qdrant_filter = None
+        if filters:
+            must_conditions = []
+            if "doc_id" in filters:
+                must_conditions.append(
+                    models.FieldCondition(
+                        key=PAYLOAD_DOC_ID, match=models.MatchValue(value=filters["doc_id"])
+                    )
+                )
+            if "doc_ids" in filters:
+                must_conditions.append(
+                    models.FieldCondition(
+                        key=PAYLOAD_DOC_ID, match=models.MatchAny(any=filters["doc_ids"])
+                    )
+                )
+            field_keys = {
+                "document_name": "name_key",
+                "author": "author_key",
+                "file_type": "file_type",
+                "date": "date",
+                "chapter": "chapter",
+                "section": "section_key",
+            }
+            for key, payload_key in field_keys.items():
+                if key in filters:
+                    value = str(filters[key]).casefold()
+                    if key == "section":
+                        value = QdrantAdapter._section_key(value)
+                    must_conditions.append(
+                        models.FieldCondition(key=payload_key, match=models.MatchValue(value=value))
+                    )
+            if "page" in filters:
+                must_conditions.append(
+                    models.FieldCondition(
+                        key=PAYLOAD_PAGE, match=models.MatchValue(value=filters["page"])
+                    )
+                )
+            if "access_tags" in filters:
+                must_conditions.append(
+                    models.FieldCondition(
+                        key=PAYLOAD_ACCESS_TAGS, match=models.MatchAny(any=filters["access_tags"])
+                    )
+                )
+
+            if must_conditions:
+                qdrant_filter = models.Filter(must=must_conditions)
+
+        return qdrant_filter
+
+    @staticmethod
+    def _section_key(value: str) -> str:
+        match = re.match(r"(?:section\s+)?(\d+(?:\.\d+)*)\b", value, re.I)
+        return match.group(1) if match else value.casefold()
 
     async def delete_by_document(self, document_id: str) -> None:
         await self.client.delete(

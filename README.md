@@ -1,77 +1,50 @@
 # NLP Doc Agent
 
-A production-grade, evidence-first document question-answering system. Upload PDF, Word, plain-text, or Markdown documents and ask questions in natural language. Answers are generated through a deterministic multi-agent pipeline and are grounded in document evidence with precise page and document citations.
+A backend implementation of the Task-7 document-chat workflow: Retriever, Analyst, and Answer agents coordinated by a bounded orchestrator. The frontend is not implemented.
 
-## What It Does
+- Upload PDF, DOCX, TXT, or Markdown files.
+- Clean and chunk text, retain source locations and structured PDF/DOCX tables, and index dense and sparse vectors in Qdrant.
+- Search with dense embeddings and BM25, apply metadata filters, rerank, and select context within a token budget.
+- Run source-backed arithmetic, document comparisons, and table/statistical analysis.
+- Retrieve additional evidence when needed; refuse to generate a final answer if evidence remains insufficient.
+- Return verified source references, readable citations, tool results, and a persistent conversation ID.
 
-- **Supports multiple document formats:** Ingests PDF, DOCX, TXT, and Markdown files.
-- **Processes documents for retrieval:** Parses, cleans, chunks, and embeds document content into a vector store, retaining rich metadata such as page, section, author, and document type.
-- **Uses a multi-agent pipeline:** Coordinates three agents — **Retriever**, **Analyst**, and **Answer** — through a deterministic **Orchestrator**.
-- **Combines retrieval methods:** Uses semantic search, keyword search, metadata filtering, and reranking to identify relevant evidence.
-- **Analyzes retrieved content:** Supports calculations, table extraction, document comparison, and data analysis based on retrieved evidence.
-- **Provides traceable answers:** Returns precise inline citations that open the corresponding source chunk in the user interface.
+## Run the backend
 
-## Technology Stack
+Requires Docker Desktop/Engine and Docker Compose. From the repository root, create .env from .env.example **only if you do not already have one**, then configure GROQ_API_KEY.
 
-### Backend
+PowerShell:
 
-- FastAPI and Python 3.12
-- Qdrant for vector storage
-- Redis for caching and queuing
-- SQLite for metadata storage
-- Groq for LLM inference
-- Self-hosted `bge-small` for embeddings
-- Self-hosted `bge-reranker-base` for reranking
+    if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+    docker compose -f docker-compose.yml up -d --build qdrant redis migrate backend worker
+    docker compose -f docker-compose.yml logs --tail=100 migrate backend worker
 
-### Frontend
+The migrate service upgrades SQLite before the API and worker start. Open http://localhost:8000/docs to upload files and send questions. Poll GET /jobs/{job_id} until completed before querying new documents.
 
-- Next.js 14 (App Router)
-- TypeScript
-- Tailwind CSS
-- shadcn/ui
-- Vercel AI SDK
+For existing installations, read [the upgrade instructions](docs/deployment.md). Existing documents need reindexing to populate the new metadata and structured table fields.
 
-### Deployment
+## Tests
 
-- Docker Compose
-- Five local services
+From backend, after installing uv:
 
-## Quick Start
+    uv sync --frozen --all-extras
+    uv run --no-sync ruff check .
+    uv run --no-sync mypy src
+    uv run --no-sync pytest -q
 
-### Prerequisites
+The default suite uses isolated SQLite and in-memory Qdrant, generated PDF/DOCX fixtures, and mocked provider/model calls. It does not require a Groq key or running Docker services.
 
-Make sure Docker with Docker Compose is installed and running. The project also uses `make` for its convenience commands.
-
-### Run the Application
-
-```bash
-git clone <repo-url>
-cd nlp-doc-chat
-cp .env.example .env
-make up
-```
-
-Before starting the application, review `.env` and configure any required environment variables. Refer to `.env.example` for the available settings. Do not commit your `.env` file or any secrets.
-
-Once the services are running, open:
-
-- **Frontend:** [http://localhost:3000](http://localhost:3000)
-- **Backend API documentation:** [http://localhost:8000/docs](http://localhost:8000/docs)
+An optional live ML/Groq smoke test is available at infrastructure/scripts/smoke_backend.py. It creates synthetic documents and uses isolated in-memory databases; it makes real Groq requests. See [deployment and verification](docs/deployment.md).
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — system structure and component responsibilities.
-- [Reliability Invariants](docs/reliability.md) — rules and guarantees the system is designed to maintain.
-- [API Reference](docs/api-reference.md) — API endpoints and usage details.
-- [Data Model](docs/data-model.md) — data structures and relationships.
-- [Deployment](docs/deployment.md) — deployment and configuration guidance.
-- [Decision Records](docs/decisions/README.md) — architectural and technical decisions.
-- [Contributing Guide](CONTRIBUTING.md) — development setup, Git workflow, contribution rules, and code review standards.
+- [Task-7 implementation and before/after changes](docs/task7-implementation.md)
+- [API reference](docs/api-reference.md)
+- [Architecture](docs/architecture.md)
+- [Data model](docs/data-model.md)
+- [Reliability and limitations](docs/reliability.md)
+- [Deployment and upgrade commands](docs/deployment.md)
 
-## Contributing
+## Scope
 
-Contributions are welcome. Before making changes, read the [Contributing Guide](CONTRIBUTING.md) for development setup, branching conventions, commit messages, pull request requirements, testing, and code review standards.
-
-## License
-
-See the [LICENSE](LICENSE) file in the root of the repository for the project's license terms.
+This is a local, single-user backend. Authentication, frontend UI, SSE chat, automatic OCR, and production multi-tenant isolation are not implemented. Image-only PDFs must be OCRed before upload. DOCX/TXT/Markdown citations use native block/line locations rather than invented physical page numbers. Grounding review uses an LLM and is not a mathematical guarantee of factual correctness.

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     JWT_SECRET: str = Field(default="super_secret_jwt_key_change_in_production")
     LOG_LEVEL: str = Field(default="info")
     DATA_DIR: str = Field(default="/app/data")
+    MAX_UPLOAD_BYTES: int = Field(default=50 * 1024 * 1024, gt=0)
+    LLM_MODEL: str = Field(default="openai/gpt-oss-120b")
 
     # Models
     EMBEDDING_MODEL: str = Field(default="BAAI/bge-small-en-v1.5")

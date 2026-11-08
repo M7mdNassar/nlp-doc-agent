@@ -28,13 +28,13 @@ jobs:
       - name: Install dependencies
         run: |
           cd backend
-          uv sync --all-extras
+          uv sync --frozen --all-extras
           
       - name: Lint with ruff
-        run: cd backend && uv run ruff check .
+        run: cd backend && uv run --no-sync ruff check .
         
       - name: Type check with mypy
-        run: cd backend && uv run mypy src
+        run: cd backend && uv run --no-sync mypy src
         
       - name: Test with pytest
-        run: cd backend && uv run --extra dev pytest
+        run: cd backend && uv run --no-sync pytest
