@@ -1,6 +1,6 @@
 # NLP Doc Agent
 
-A backend implementation of the Task-7 document-chat workflow: Retriever, Analyst, and Answer agents coordinated by a bounded orchestrator. The frontend is not implemented.
+A full-stack implementation of the Task-7 document-chat workflow: Retriever, Analyst, and Answer agents coordinated by a bounded orchestrator, with **Folio**, a responsive document research workspace.
 
 - Upload PDF, DOCX, TXT, or Markdown files.
 - Clean and chunk text, retain source locations and structured PDF/DOCX tables, and index dense and sparse vectors in Qdrant.
@@ -8,6 +8,26 @@ A backend implementation of the Task-7 document-chat workflow: Retriever, Analys
 - Run source-backed arithmetic, document comparisons, and table/statistical analysis.
 - Retrieve additional evidence when needed; refuse to generate a final answer if evidence remains insufficient.
 - Return verified source references, readable citations, tool results, and a persistent conversation ID.
+- Upload and manage documents, follow indexing jobs, ask questions, and inspect cited excerpts through the browser.
+- Choose specific sources, continue conversations, export answers, and switch between light and dark themes.
+
+## Open the workspace
+
+If the backend is already running, add the frontend without rebuilding the Python services:
+
+```sh
+docker compose -f docker-compose.yml up -d --build --no-deps frontend
+```
+
+Open **http://localhost:3000**. The frontend uses your existing backend, uploaded documents, and provider configuration. No extra API key or database migration is needed for the frontend.
+
+For a fresh installation, configure the root `.env` as described below, then start all services:
+
+```sh
+docker compose -f docker-compose.yml up -d --build qdrant redis migrate backend worker frontend
+```
+
+See [frontend development and tests](frontend/README.md) for running Next.js locally. Conversation history is stored in the current browser; the backend API does not expose a history-list endpoint. Uploaded files and processing jobs remain in the backend volumes.
 
 ## Run the backend
 
@@ -47,4 +67,4 @@ An optional live ML/Groq smoke test is available at infrastructure/scripts/smoke
 
 ## Scope
 
-This is a local, single-user backend. Authentication, frontend UI, SSE chat, automatic OCR, and production multi-tenant isolation are not implemented. Image-only PDFs must be OCRed before upload. DOCX/TXT/Markdown citations use native block/line locations rather than invented physical page numbers. Grounding review uses an LLM and is not a mathematical guarantee of factual correctness.
+This is a local, single-user application. Authentication, SSE chat, automatic OCR, and production multi-tenant isolation are not implemented. Chat displays the completed, reviewed backend answer rather than streamed tokens. Image-only PDFs must be OCRed before upload. DOCX/TXT/Markdown citations use native block/line locations rather than invented physical page numbers. Grounding review uses an LLM and is not a mathematical guarantee of factual correctness.

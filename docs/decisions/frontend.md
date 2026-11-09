@@ -1,44 +1,30 @@
-# Frontend Stack and Streaming
+# Frontend workspace and API boundary
 
 ## Status
 
-Accepted.
-
-## Context
-
-The frontend must:
-
-- Stream tokens from an SSE endpoint to the browser.
-- Render inline citations as interactive chips that open the exact source chunk.
-- Manage a document library with async ingestion status.
-- Look and behave like a production application, not an internal tool.
-
-Candidate approaches included Streamlit, a React SPA with a custom streaming layer, and Next.js with the Vercel AI SDK.
+Implemented. This supersedes the earlier proposed Next.js 14 / Vercel AI SDK streaming design, which did not describe the actual backend contract.
 
 ## Decision
 
-The frontend is built with **Next.js 14 (App Router)**, **TypeScript**, **Tailwind CSS**, **shadcn/ui**, and the **Vercel AI SDK**.
+Folio uses **Next.js 16 App Router, React, TypeScript, custom CSS, and Radix Dialog**. It is a separate Node 22 container in the same repository. Locally bundled DM Sans and Lora fonts, semantic color tokens, responsive layouts, and light/dark themes define the visual system. There is no Tailwind or AI SDK dependency.
 
-The frontend and backend live in the **same repository** but are built as separate Docker images and run as separate containers. The browser talks only to Next.js. A Next.js route handler bridges the backend’s SSE stream to the Vercel AI SDK protocol. Business logic — retrieval, agents, citations — never moves into Next.js.
+The browser talks to an allowlisted Next.js route handler at `/api/backend/...`; the server forwards to a server-only `BACKEND_URL`. Provider keys remain in the Python backend. The frontend container does not import the root environment file. The proxy checks mutation origins and body size, sets timeouts, and does not forward cookies or browser authorization headers.
 
-The TypeScript client for the backend is generated from the FastAPI OpenAPI schema and committed to the repository.
+The API client has TypeScript contracts with Zod validation for actual response payloads. These are maintained explicitly because the current chat route's OpenAPI response does not expose the complete typed answer schema. API-contract changes require updating the client schemas and fixtures.
 
-## Consequences
+## Interaction model
 
-Easier:
+- The current backend returns a completed JSON answer. Chat waits for that result; it does not invent streamed tokens or internal agent stages. Cancelling stops waiting and does not promise that backend work has stopped.
+- Document uploads return job IDs. The client polls jobs and the document library until processing reaches a terminal state, and preserves pending job IDs in browser storage across reloads.
+- Specific document selections are explicit filters. Missing, unready, or empty selections disable sending instead of silently broadening the query.
+- Citations open the actual source quote with document name and page or native block/line location. There is no original-file viewer because the backend does not offer a file-serving endpoint.
+- Conversation IDs support backend follow-ups. Sidebar history is browser-local because there is no backend history-list API. Storage failures are visible rather than silently losing the persistence guarantee.
+- Insufficient-evidence answers, API errors, and cancelled requests have distinct states. Model Markdown is rendered without raw HTML.
 
-- Streaming chat is implemented with a well-supported hook and protocol, not a hand-rolled parser.
-- Citations can be rendered as first-class components with their own navigation.
-- The UI is a real product surface, not a prototyping surface.
-- Type safety across the API boundary is enforced at build time.
+## Verification
 
-Harder:
+ESLint, TypeScript, a production build, Playwright browser flows, axe accessibility checks, and proxy tests run in frontend CI. Browser tests use mocked API responses; a separate live smoke test verifies the running Python/Redis/Qdrant/Groq integration. Neither automated accessibility checks nor mocked tests alone establish complete production readiness.
 
-- Two services to build and deploy instead of one.
-- The frontend requires a codegen step whenever the backend API changes. This is enforced in CI.
+## Boundaries
 
-## Alternatives considered
-
-- **Streamlit.** Rejected. It cannot render interactive citation chips, cannot stream tokens with the control the UI needs, and is a prototyping tool, not a production frontend.
-- **React SPA with a custom streaming client.** Rejected. It duplicates the protocol handling that the Vercel AI SDK already solves, and it loses the App Router’s conventions for routing, layout, and server components.
-- **Monolithic Next.js with business logic inside route handlers.** Rejected. It would move retrieval, orchestration, and citation verification into TypeScript, losing the Python ML ecosystem and the strict layering enforced on the backend.
+Retrieval, orchestration, grounding review, tool execution, and provider calls remain in Python. The UI adds no authentication, multi-tenant isolation, OCR, SSE protocol, or cross-device conversation sync. The application remains intended for local single-user use.

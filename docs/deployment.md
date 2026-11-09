@@ -1,6 +1,27 @@
-# Backend deployment and upgrade
+# Deployment and upgrade
 
-The frontend is excluded from these commands. Run commands from the repository root unless stated otherwise.
+Run commands from the repository root unless stated otherwise. The backend upgrade sections below retain the API-only commands; the frontend can be added independently.
+
+## Add the Folio frontend to an existing backend
+
+```sh
+docker compose -f docker-compose.yml up -d --build --no-deps frontend
+docker compose -f docker-compose.yml logs --tail=100 frontend
+```
+
+Open **http://localhost:3000**. No backend rebuild, database migration, reindex, or volume reset is needed for this frontend addition. Existing uploaded documents appear automatically. Swagger remains at http://localhost:8000/docs and Qdrant at http://localhost:6333/dashboard.
+
+The new frontend image uses Node 22 and runs as an unprivileged user. Compose publishes it on the local machine only (`127.0.0.1:3000`). Its server forwards allowed API requests to `BACKEND_URL=http://backend:8000`. The browser uses same-origin `/api/backend/...` URLs. The frontend does not load the root `.env`, and needs no Groq key, JWT secret, or `NEXT_PUBLIC_API_URL`. Keep provider credentials in the backend's existing configuration.
+
+For a completely fresh installation, configure `.env` first, then run:
+
+```sh
+docker compose -f docker-compose.yml up -d --build qdrant redis migrate backend worker frontend
+```
+
+Use **Upload documents** in the UI, wait for **Ready**, then ask a question. Click a citation to see the actual retrieved excerpt. The library exposes processing errors, job IDs, reindex, and deletion. Conversations and theme preferences are saved in the current browser. The frontend cannot import earlier Swagger conversations because the backend has no conversation-list endpoint.
+
+For local development, run the backend stack with Docker, then follow [frontend/README.md](../frontend/README.md). Stop a locally running Next.js server before starting the frontend container because both use port 3000. These services remain intended for local single-user use; this update does not add authentication or authorize public exposure.
 
 ## Configuration
 
