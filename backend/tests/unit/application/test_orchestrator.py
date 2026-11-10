@@ -9,6 +9,7 @@ from src.application.citations.verifier import CitationVerifier
 from src.domain.entities.analysis import AnalysisResult
 from src.domain.entities.answer import AnswerBlock, AnswerDraft, EvidenceReference, GroundingVerdict
 from src.domain.entities.evidence import EvidencePackage
+from src.domain.exceptions.llm_provider_error import LLMRateLimitError
 
 
 def make_orchestrator(sample_chunks, verdicts, batches=None):
@@ -158,3 +159,18 @@ async def test_persistent_added_details_stop_after_three_drafts(sample_chunks):
     assert result["sources"] == []
     assert orchestrator.answer_agent.generate.await_count == 3
     assert orchestrator.answer_agent.review.await_count == 3
+
+
+@pytest.mark.parametrize("stage", ["generate", "review"])
+async def test_answer_provider_errors_are_not_evidence_refusals(sample_chunks, stage):
+    orchestrator = make_orchestrator(sample_chunks, [AnalysisResult(True, "")])
+    error = LLMRateLimitError("Groq", 879)
+    getattr(orchestrator.answer_agent, stage).side_effect = error
+    with pytest.raises(LLMRateLimitError) as raised:
+        await orchestrator.process("Tell me about the projects")
+    assert raised.value is error
+    assert orchestrator.answer_agent.generate.await_count == 1
+    if stage == "generate":
+        orchestrator.answer_agent.review.assert_not_awaited()
+    else:
+        orchestrator.answer_agent.review.assert_awaited_once()

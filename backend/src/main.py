@@ -9,6 +9,11 @@ from src.api.routers.jobs import router as jobs_router
 from src.core.constants import APP_NAME
 from src.core.errors import AppError
 from src.core.logging import setup_logging
+from src.domain.exceptions.llm_provider_error import (
+    LLMConfigurationError,
+    LLMProviderError,
+    LLMRateLimitError,
+)
 from src.lifespan import lifespan
 
 setup_logging()
@@ -17,6 +22,34 @@ logger = structlog.get_logger(__name__)
 
 def create_app() -> FastAPI:
     app = FastAPI(title=APP_NAME, version="0.1.0", lifespan=lifespan)
+
+    @app.exception_handler(LLMProviderError)
+    async def llm_error_handler(request: Request, exc: LLMProviderError) -> JSONResponse:
+        rate_limited = isinstance(exc, LLMRateLimitError)
+        code = (
+            "LLM_RATE_LIMITED"
+            if rate_limited
+            else "LLM_CONFIGURATION_ERROR"
+            if isinstance(exc, LLMConfigurationError)
+            else "LLM_UNAVAILABLE"
+        )
+        headers = {"Cache-Control": "no-store"}
+        retry_after = exc.retry_after_seconds if isinstance(exc, LLMRateLimitError) else None
+        if retry_after is not None:
+            headers["Retry-After"] = str(retry_after)
+        logger.warning("llm_service_error", code=code, provider=exc.provider, path=request.url.path)
+        return JSONResponse(
+            status_code=429 if rate_limited else 503,
+            headers=headers,
+            content={
+                "code": code,
+                "message": str(exc),
+                "details": {
+                    "provider": exc.provider,
+                    **({"retry_after_seconds": retry_after} if retry_after is not None else {}),
+                },
+            },
+        )
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:

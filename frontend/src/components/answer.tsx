@@ -102,8 +102,8 @@ export function AnswerMessage({
                 <div>
                   <strong>Not enough verified evidence</strong>
                   <p>
-                    Try a more specific question or add another source. Provider
-                    errors can also prevent an answer from being verified.
+                    Try a more specific question, choose different documents, or
+                    add another source.
                   </p>
                 </div>
               </div>

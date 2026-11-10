@@ -91,6 +91,9 @@ export async function proxyRequest(request: Request, segments: string[]) {
         "Content-Type":
           upstream.headers.get("content-type") || "application/json",
         "Cache-Control": "no-store",
+        ...(upstream.headers.has("retry-after")
+          ? { "Retry-After": upstream.headers.get("retry-after")! }
+          : {}),
       },
     });
   } catch (cause) {

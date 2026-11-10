@@ -7,6 +7,7 @@ from src.application.structured_output import parse_model
 from src.application.tools.analyst_tools import AnalystTools
 from src.domain.entities.analysis import AnalysisPlan, AnalysisResult, AnalysisVerdict
 from src.domain.entities.evidence import EvidencePackage
+from src.domain.exceptions.llm_provider_error import LLMProviderError
 from src.domain.ports.llm import LLMClient
 from src.domain.value_objects.token_budget import TokenBudget
 
@@ -105,6 +106,8 @@ class AnalystAgent:
                 verdict.findings,
                 results,
             )
+        except LLMProviderError:
+            raise
         except Exception as exc:
             logger.warning("analysis_failed", error=str(exc))
             return AnalysisResult(

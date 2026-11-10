@@ -126,6 +126,36 @@ change the database. It checks incorrect drafts as well as a newly generated sum
 
 ## Container changes
 
+### Provider error reporting update
+
+If upgrading from a version that displayed Groq quota errors as "Not enough verified evidence", rebuild only the API and frontend:
+
+```sh
+docker compose -f docker-compose.yml up -d --build --no-deps backend frontend
+```
+
+No dependency, schema, environment variable, worker, or vector-index changes are required for this fix. Refresh Folio after the containers start and send a new question; older saved responses are historical and are not rewritten.
+
+The UI now displays a provider-limit error with an approximate wait when Groq supplies one. The API returns HTTP 429 rather than a successful evidence-refusal response. Wait before retrying and check your account's [Groq limits](https://console.groq.com/settings/limits) if the quota remains exhausted. Limits apply to the organization, so creating another key in the same organization does not create more quota. See [Groq's rate-limit documentation](https://console.groq.com/docs/rate-limits).
+
+Choosing just the relevant CV can reduce unrelated retrieval context, but cannot bypass provider limits. Keep the existing key and model unless you intentionally choose a different provider/model configuration or plan. Database resets and reuploads do not replenish Groq quota. The green connection indicator checks backend dependencies, not the provider's remaining token allowance.
+
+### Cooldown retry correction
+
+If the provider-error update is already installed, this follow-up only needs the backend:
+
+```sh
+docker compose -f docker-compose.yml up -d --build --no-deps backend
+```
+
+Local cooldown waits no longer consume the three provider attempts. An early wakeup waits
+out the remaining cooldown within the same 60-second rate-limit wait budget. Citation and
+answer-quality verification still run, and genuine quota exhaustion still returns HTTP 429.
+No frontend/worker rebuild, dependency update, environment change, migration, reindex, or
+volume reset is required. Wait for backend startup/model warmup before retrying in Folio.
+
+### Existing image configuration
+
 - Production backend and worker install uv sync --frozen --no-dev --extra ml --no-cache.
 - Development stages install all extras with the frozen lockfile and --no-cache.
 - Linux and Windows use CPU-only PyTorch from the official PyTorch CPU index. The refreshed lockfile excludes CUDA/NVIDIA dependencies; no GPU is required. macOS retains its PyPI source.

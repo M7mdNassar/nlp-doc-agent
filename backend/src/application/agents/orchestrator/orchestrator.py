@@ -16,6 +16,7 @@ from src.domain.entities.analysis import AnalysisResult
 from src.domain.entities.answer import ChatResult
 from src.domain.entities.document import Document
 from src.domain.entities.evidence import EvidencePackage
+from src.domain.exceptions.llm_provider_error import LLMProviderError
 from src.domain.value_objects.metadata_filters import MetadataFilters
 
 logger = structlog.get_logger(__name__)
@@ -128,6 +129,8 @@ class Orchestrator:
                         ],
                     }
                 )
+        except LLMProviderError:
+            raise
         except Exception as exc:
             logger.warning("answer_rejected", error=str(exc))
         return result

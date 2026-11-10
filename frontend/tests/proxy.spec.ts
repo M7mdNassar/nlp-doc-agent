@@ -89,3 +89,27 @@ test("container bind addresses preserve browser origins without forwarding crede
     globalThis.fetch = originalFetch;
   }
 });
+
+test("proxy preserves provider rate-limit status and Retry-After", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () =>
+    Response.json(
+      { code: "LLM_RATE_LIMITED", message: "Groq rate limit" },
+      {
+        status: 429,
+        headers: { "retry-after": "879", "set-cookie": "private=secret" },
+      },
+    );
+  try {
+    const response = await proxyRequest(
+      new Request("http://localhost:3000/api/backend/chat", { method: "POST" }),
+      ["chat"],
+    );
+    expect(response.status).toBe(429);
+    expect(response.headers.get("retry-after")).toBe("879");
+    expect(response.headers.has("set-cookie")).toBe(false);
+    expect((await response.json()).code).toBe("LLM_RATE_LIMITED");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

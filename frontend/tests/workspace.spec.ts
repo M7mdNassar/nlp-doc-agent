@@ -315,6 +315,40 @@ test("provider errors allow retry, and cancellation does not fabricate an answer
   await expect(page.locator(".source-card")).toHaveCount(0);
 });
 
+test("Groq quota failures show the wait time instead of insufficient evidence and can recover", async ({
+  page,
+}) => {
+  const api = await mockApi(page);
+  api.setChat(
+    {
+      code: "LLM_RATE_LIMITED",
+      message:
+        "Groq has reached a request or token limit. Please try again later.",
+      details: { provider: "Groq", retry_after_seconds: 879 },
+    },
+    429,
+  );
+  await page.goto("/");
+  await page
+    .getByRole("textbox", { name: "Ask a question about your documents" })
+    .fill("Tell me about Nafe's projects");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(page.locator(".answer-error")).toContainText(
+    "Groq has reached a request or token limit",
+  );
+  await expect(page.locator(".answer-error")).toContainText("15 minutes");
+  await expect(page.locator(".answer-error")).toContainText(
+    "Your documents are still available",
+  );
+  await expect(page.locator(".evidence-notice")).toHaveCount(0);
+  await expect(page.locator(".source-card")).toHaveCount(0);
+  expect(api.chats).toHaveLength(1);
+  api.setChat(answer);
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.locator(".source-card")).toHaveCount(1);
+  expect(api.chats[1].message).toBe("Tell me about Nafe's projects");
+});
+
 test("source and model content cannot execute HTML or JavaScript", async ({
   page,
 }) => {

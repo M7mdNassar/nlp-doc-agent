@@ -1,5 +1,6 @@
 import structlog
 
+from src.domain.exceptions.llm_provider_error import LLMProviderError
 from src.domain.ports.llm import LLMClient
 from src.domain.value_objects.token_budget import TokenBudget
 
@@ -18,6 +19,8 @@ class QueryRewriter:
         try:
             rewritten = await self.llm.generate(prompt, system, budget)
             return rewritten.strip()
+        except LLMProviderError:
+            raise
         except Exception as e:
             logger.warning(f"Query rewrite failed: {e}. Using original.")
             return query

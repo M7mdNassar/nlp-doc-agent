@@ -10,6 +10,11 @@ from httpx import ASGITransport, AsyncClient
 from src.core.errors import ValidationError
 from src.domain.entities.document import Document
 from src.domain.entities.job import Job, JobStatus
+from src.domain.exceptions.llm_provider_error import (
+    LLMConfigurationError,
+    LLMProviderError,
+    LLMRateLimitError,
+)
 from src.domain.value_objects.document_id import DocumentId
 
 
@@ -240,3 +245,30 @@ async def test_reindex_endpoint_returns_new_job(api, client):
     assert response.status_code == 200
     assert response.json()["job_id"] == "job-reindex"
     uc.reindex.assert_awaited_once_with(doc.id)
+
+
+@pytest.mark.parametrize(
+    "error,status,code,retry_after",
+    [
+        (LLMRateLimitError("Groq", 879), 429, "LLM_RATE_LIMITED", "879"),
+        (LLMRateLimitError("Groq"), 429, "LLM_RATE_LIMITED", None),
+        (LLMProviderError("Groq"), 503, "LLM_UNAVAILABLE", None),
+        (LLMConfigurationError("Groq"), 503, "LLM_CONFIGURATION_ERROR", None),
+    ],
+)
+async def test_chat_provider_failures_are_service_errors(
+    api, client, error, status, code, retry_after
+):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock(side_effect=error))
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    response = await client.post("/chat", json={"message": "Projects?"})
+    assert response.status_code == status
+    body = response.json()
+    assert body["code"] == code
+    assert body["message"] == str(error)
+    assert body["details"]["provider"] == "Groq"
+    assert "state" not in body
+    assert response.headers.get("retry-after") == retry_after
+    assert body["details"].get("retry_after_seconds") == (int(retry_after) if retry_after else None)
+    assert response.headers["cache-control"] == "no-store"

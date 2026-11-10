@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 
 import structlog
 
+from src.domain.exceptions.llm_provider_error import LLMProviderError
 from src.domain.ports.llm import LLMClient
 from src.domain.value_objects.token_budget import TokenBudget
 
@@ -30,6 +31,8 @@ class LLMRouter(LLMClient):
             except Exception as e:
                 logger.warning(f"Provider {provider.__class__.__name__} failed: {e}")
                 last_error = e
+        if isinstance(last_error, LLMProviderError):
+            raise last_error
         raise RuntimeError(f"All LLM providers failed. Last error: {last_error}")
 
     async def stream(
@@ -44,4 +47,6 @@ class LLMRouter(LLMClient):
             except Exception as e:
                 logger.warning(f"Provider {provider.__class__.__name__} stream failed: {e}")
                 last_error = e
+        if isinstance(last_error, LLMProviderError):
+            raise last_error
         raise RuntimeError(f"All LLM providers failed to stream. Last error: {last_error}")

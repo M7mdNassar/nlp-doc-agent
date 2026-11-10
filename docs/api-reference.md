@@ -87,4 +87,22 @@ For DOCX/TXT/Markdown, location is the citation locator; page=1 is an internal l
 
 Application errors contain code, message, and details. Missing resources return 404; upload/reindex validation returns 400; queue submission failure returns 503. FastAPI request/schema validation uses its standard 422 detail response.
 
+Provider failures are service errors, not `200 insufficient_evidence` answers:
+
+- `429 LLM_RATE_LIMITED`: the LLM provider rejected the request due to a request/token limit. If the provider supplies a valid wait duration, the response includes a `Retry-After` header (seconds) and `details.retry_after_seconds`.
+- `503 LLM_UNAVAILABLE`: a provider connection or availability failure after bounded retries.
+- `503 LLM_CONFIGURATION_ERROR`: the provider rejected its credentials, model, or request configuration.
+
+For example, a rate-limited chat can return:
+
+```json
+{
+  "code": "LLM_RATE_LIMITED",
+  "message": "Groq has reached a request or token limit. Please try again later.",
+  "details": { "provider": "Groq", "retry_after_seconds": 879 }
+}
+```
+
+These failures do not save a fabricated insufficient-evidence answer to conversation history. A provider wait hint is not a guarantee that all remaining LLM calls for an answer will fit the quota. Genuine missing evidence and failed grounding checks still return the normal `insufficient_evidence` result.
+
 Do not interpret health=ok as proof that a particular document, model, provider key, or answer is correct. Poll jobs and inspect their errors.

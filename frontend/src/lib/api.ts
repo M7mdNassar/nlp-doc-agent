@@ -41,9 +41,24 @@ async function request<T>(
         .map((item: { msg?: string }) => item.msg)
         .filter(Boolean)
         .join(" ");
-    if (response.status === 429)
-      message =
-        "The service has reached a usage limit. Please try again later.";
+    if (response.status === 429) {
+      if (data.code === "LLM_RATE_LIMITED") {
+        const seconds = Number(
+          data.details?.retry_after_seconds ??
+            response.headers.get("retry-after"),
+        );
+        const wait =
+          Number.isFinite(seconds) && seconds > 0
+            ? seconds >= 60
+              ? `Please wait about ${Math.ceil(seconds / 60)} minute${seconds > 60 ? "s" : ""} before trying again.`
+              : `Please wait about ${Math.ceil(seconds)} second${seconds > 1 ? "s" : ""} before trying again.`
+            : "Please try again after the provider limit resets.";
+        message = `${message || "The AI provider has reached a usage limit."} ${wait} Your documents are still available.`;
+      } else {
+        message =
+          "The service has reached a usage limit. Please try again later.";
+      }
+    }
     throw new ApiError(
       message || "Something went wrong. Please try again.",
       response.status,
