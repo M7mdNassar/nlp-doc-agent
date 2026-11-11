@@ -2,6 +2,36 @@
 
 Run commands from the repository root unless stated otherwise. The backend upgrade sections below retain the API-only commands; the frontend can be added independently.
 
+## Update analysis validation and bounded correction
+
+After copying/pulling the updated backend code, rebuild only the backend. Existing
+documents, vectors, conversation data, environment settings and model selection stay
+in place. No migration, dependency change, reindex, worker or frontend rebuild is needed.
+
+CPU installation:
+
+```powershell
+docker compose -f docker-compose.yml up -d --build --no-deps backend
+```
+
+GPU test laptop (preserve the GPU override):
+
+```powershell
+$env:RERANKER_DEVICE = "cuda"
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build --no-deps backend
+```
+
+Wait for startup/model loading, then check `http://localhost:8000/health`. Ask the same
+question in a new conversation with only the intended document selected. Export logs:
+
+```powershell
+docker compose -f docker-compose.yml logs --no-color --since=15m backend | Set-Content analysis-chat.log
+```
+
+See [observability](observability.md#analysis-validation-and-correction) for the safe
+validation diagnostics and correction events. An exhausted correction now returns a
+clear service error instead of spending additional retrieval rounds on invalid output.
+
 ## Add the Folio frontend to an existing backend
 
 ```sh

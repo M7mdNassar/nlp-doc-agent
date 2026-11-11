@@ -354,3 +354,56 @@ async def test_chat_logs_and_response_group_real_adapter_usage(api, client, monk
     assert [e["stage"] for e in requests] == ["query_rewrite", "tool_plan"]
     assert any(e.get("event") == "question_completed" for e in events)
     assert "PRIVATE_" not in caplog.text
+
+
+async def test_exhausted_analysis_returns_safe_503_with_question_usage(
+    api,
+    client,
+    monkeypatch,
+    caplog,
+    sample_chunks,
+):
+    import logging
+
+    from src.application.agents.analyst.analyst_agent import AnalystAgent
+    from src.domain.entities.evidence import EvidencePackage
+    from tests.test_llm_provider_errors import adapter_with
+    from tests.test_observability import completion
+
+    adapter, create, _ = adapter_with(
+        monkeypatch,
+        [
+            completion(content='{"tools":[]}'),
+            completion(content='{"has_enough_evidence":"PRIVATE_VALUE","PRIVATE_KEY":true}'),
+            completion(content="PRIVATE_INVALID_JSON"),
+        ],
+    )
+    app, providers = api
+
+    async def execute(*args):
+        return await AnalystAgent(adapter).analyze(
+            "PRIVATE_QUESTION", EvidencePackage(chunks=sample_chunks)
+        )
+
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: SimpleNamespace(
+        execute=execute
+    )
+    with caplog.at_level(logging.INFO):
+        response = await client.post("/chat", json={"message": "PRIVATE_QUESTION"})
+    body = response.json()
+    assert response.status_code == 503
+    assert body["code"] == "ANALYSIS_OUTPUT_INVALID" and "state" not in body
+    assert body["details"]["analysis_stage"] == "analysis_verdict"
+    assert body["details"]["correction_attempts"] == 1
+    assert body["details"]["question_id"] == response.headers["x-question-id"]
+    assert body["details"]["usage"]["total_tokens"] == 375
+    assert create.await_count == 3
+    events = []
+    for record in caplog.records:
+        with suppress(ValueError):
+            events.append(json.loads(record.getMessage()))
+    invalid = [e for e in events if e.get("event") == "analysis_output_invalid"]
+    assert len(invalid) == 2
+    assert all(e["question_id"] == body["details"]["question_id"] for e in invalid)
+    assert any(issue["field"] == "has_enough_evidence" for issue in invalid[0]["issues"])
+    assert "PRIVATE_" not in caplog.text + response.text

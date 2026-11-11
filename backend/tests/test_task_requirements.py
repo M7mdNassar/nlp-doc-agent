@@ -330,16 +330,20 @@ async def test_analyst_shared_text_preserves_multiple_source_identities():
 
 @pytest.mark.parametrize("bad", ['"false"', '"true"', "1", "null"])
 async def test_analyst_rejects_non_boolean_verdicts(bad):
+    from src.core.errors import AnalysisOutputError
+
     llm = SimpleNamespace(
         generate=AsyncMock(
             side_effect=[
                 '{"tools":[]}',
                 '{"has_enough_evidence":' + bad + ',"missing_info":"missing"}',
+                '{"has_enough_evidence":' + bad + ',"missing_info":"missing"}',
             ]
         )
     )
-    result = await AnalystAgent(llm).analyze("q", EvidencePackage(chunks=[passage(92)]))
-    assert result.has_enough_evidence is False
+    with pytest.raises(AnalysisOutputError):
+        await AnalystAgent(llm).analyze("q", EvidencePackage(chunks=[passage(92)]))
+    assert llm.generate.await_count == 3
 
 
 async def test_chat_uses_saved_history_filters_and_persists_new_turn():

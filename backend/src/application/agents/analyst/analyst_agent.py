@@ -1,15 +1,18 @@
 import json
+from collections.abc import Callable
 from dataclasses import asdict
 
 import structlog
+from pydantic import BaseModel
 
+from src.application.agents.analyst.validation import AnalysisGroundingError, validation_details
 from src.application.agents.source_texts import SourceTexts
 from src.application.structured_output import parse_model
 from src.application.tools.analyst_tools import AnalystTools
+from src.core.errors import AnalysisOutputError
 from src.core.observability import stage
-from src.domain.entities.analysis import AnalysisPlan, AnalysisResult, AnalysisVerdict
+from src.domain.entities.analysis import AnalysisPlan, AnalysisResult, AnalysisVerdict, ToolResult
 from src.domain.entities.evidence import EvidencePackage
-from src.domain.exceptions.llm_provider_error import LLMProviderError
 from src.domain.ports.llm import LLMClient
 from src.domain.value_objects.token_budget import TokenBudget
 
@@ -44,6 +47,8 @@ Return only JSON:
  "findings":[{"text":"An evidence-backed insight", "chunk_ids":["chunk_..."]}]}
 All flags must be JSON booleans. Do not claim sufficiency if information, units, or tool results
 needed for the question are missing. Describe the specific missing facts as a retrieval query.
+Use only the supplied evidence chunk_id values in findings.chunk_ids, never text_id values.
+A sufficient verdict must contain at least one finding with a nonempty list of chunk IDs.
 Do not resolve conflicts by inventing facts. Explain conflicts in findings.
 Keep material qualifications attached to each finding: evaluation setting (simulation,
 laboratory, validation set, or deployment), population, baseline, date, units, approximations,
@@ -58,6 +63,76 @@ establish that its input data were synthetic or that real observations were neve
 Distinguish "the source does not establish X" from "X did not happen". Do not add unstated
 methods, causes, deployment claims, or certainty to make an answer sound more complete.
 """
+
+
+class _AnalysisRecovery:
+    """One correction shared by planning, tool validation and verdict validation.
+
+    Created per analyze() call so concurrent questions cannot share the budget.
+    Provider transport retries remain the responsibility of the LLM adapter.
+    """
+
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
+        self.correction_used = False
+
+    async def request[T](
+        self,
+        name: str,
+        prompt: str,
+        system: str,
+        schema: type[BaseModel],
+        validate: Callable[[str], T],
+        evidence_count: int,
+        unique_texts: int,
+    ) -> T:
+        current_prompt = prompt
+        for attempt in (1, 2):
+            # Provider/runtime failures are deliberately outside the validation catch.
+            # They must never become missing-evidence verdicts or correction requests.
+            with stage(
+                name,
+                analysis_attempt=attempt,
+                correction=attempt == 2,
+                evidence_count=evidence_count,
+                unique_texts=unique_texts,
+            ) as metrics:
+                response = await self.llm.generate(current_prompt, system, TokenBudget(4096))
+                try:
+                    result = validate(response)
+                except ValueError as exc:
+                    details = validation_details(exc)
+                    metrics["output_valid"] = False
+                    logger.warning(
+                        "analysis_output_invalid",
+                        analysis_stage=name,
+                        analysis_attempt=attempt,
+                        correction_remaining=not self.correction_used,
+                        **details,
+                    )
+                else:
+                    metrics["output_valid"] = True
+                    if attempt == 2:
+                        logger.info("analysis_output_corrected", analysis_stage=name)
+                    return result
+
+            if self.correction_used:
+                logger.warning("analysis_correction_exhausted", analysis_stage=name)
+                raise AnalysisOutputError(name)
+            self.correction_used = True
+            logger.info("analysis_correction_requested", analysis_stage=name)
+            # Reuse evidence and executed results, not the potentially huge invalid reply.
+            # Include the schema so type/field errors receive actionable correction guidance.
+            current_prompt = (
+                prompt + "\nYour previous response failed validation. Regenerate the JSON using "
+                "the SAME supplied evidence. Fix these checks without inventing facts or "
+                "claiming evidence is missing solely because your output was invalid. "
+                "Use only supplied chunk_id values for references.\nValidation checks: "
+                + json.dumps(details, separators=(",", ":"))
+                + "\nRequired JSON schema: "
+                + json.dumps(schema.model_json_schema(), separators=(",", ":"))
+            )
+        raise AssertionError("Unreachable analysis correction state")
 
 
 class AnalystAgent:
@@ -82,42 +157,51 @@ class AnalystAgent:
         ]
         payload = {"question": question, "evidence": items, "texts": texts.texts}
         prompt = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
-        try:
-            with stage(
-                "tool_plan", evidence_count=len(evidence.chunks), unique_texts=len(texts.texts)
-            ):
-                plan = parse_model(
-                    await self.llm.generate(prompt, TOOL_PROMPT, TokenBudget(4096)), AnalysisPlan
-                )
+        recovery = _AnalysisRecovery(self.llm)
+
+        def execute_plan(response: str) -> list[ToolResult]:
+            plan = parse_model(response, AnalysisPlan)
             tools = AnalystTools(evidence)
             with stage("tool_execution", tool_count=len(plan.tools)):
-                results = [tools.execute(request) for request in plan.tools]
-            verdict_prompt = (
-                prompt
-                + "\nExecuted tool results:\n"
-                + json.dumps([asdict(result) for result in results], ensure_ascii=False)
-            )
-            with stage("analysis_verdict"):
-                verdict = parse_model(
-                    await self.llm.generate(verdict_prompt, VERDICT_PROMPT, TokenBudget(4096)),
-                    AnalysisVerdict,
-                )
+                return [tools.execute(request) for request in plan.tools]
+
+        results = await recovery.request(
+            "tool_plan",
+            prompt,
+            TOOL_PROMPT,
+            AnalysisPlan,
+            execute_plan,
+            len(evidence.chunks),
+            len(texts.texts),
+        )
+        verdict_prompt = (
+            prompt
+            + "\nExecuted tool results:\n"
+            + json.dumps([asdict(result) for result in results], ensure_ascii=False)
+        )
+
+        def validate_verdict(response: str) -> AnalysisVerdict:
+            verdict = parse_model(response, AnalysisVerdict)
             valid_ids = {str(c.id) for c in evidence.chunks}
             if any(not set(f.chunk_ids) <= valid_ids for f in verdict.findings):
-                raise ValueError("Analysis cites evidence outside the supplied package")
+                raise AnalysisGroundingError("unknown_chunk_reference", "findings.chunk_ids")
             if verdict.has_enough_evidence and not verdict.findings:
-                raise ValueError("Sufficient evidence requires at least one grounded finding")
-            return AnalysisResult(
-                verdict.has_enough_evidence,
-                verdict.missing_info,
-                verdict.conflict_detected,
-                verdict.findings,
-                results,
-            )
-        except LLMProviderError:
-            raise
-        except Exception as exc:
-            logger.warning("analysis_failed", error_type=type(exc).__name__)
-            return AnalysisResult(
-                False, "The evidence could not support a valid analysis: " + str(exc)[:250]
-            )
+                raise AnalysisGroundingError("missing_grounded_findings", "findings")
+            return verdict
+
+        verdict = await recovery.request(
+            "analysis_verdict",
+            verdict_prompt,
+            VERDICT_PROMPT,
+            AnalysisVerdict,
+            validate_verdict,
+            len(evidence.chunks),
+            len(texts.texts),
+        )
+        return AnalysisResult(
+            verdict.has_enough_evidence,
+            verdict.missing_info,
+            verdict.conflict_detected,
+            verdict.findings,
+            results,
+        )

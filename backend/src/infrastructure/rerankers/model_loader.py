@@ -29,7 +29,7 @@ class RerankerModelLoader:
                 requested_device=device,
                 actual_device=str(self._model.device),
             )
-            
+
             logger.info("Reranker model loaded successfully.")
         return self._model
 
