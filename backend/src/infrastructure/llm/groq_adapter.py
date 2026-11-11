@@ -6,6 +6,7 @@ import structlog
 from groq import APIError, APIStatusError, AsyncGroq
 
 from src.core.config import settings
+from src.core.observability import llm_call_scope, llm_operation, provider_request
 from src.domain.exceptions.llm_provider_error import (
     LLMConfigurationError,
     LLMCooldownError,
@@ -16,6 +17,7 @@ from src.domain.ports.llm import LLMClient
 from src.domain.value_objects.token_budget import TokenBudget
 
 from .retry import async_retry
+from .usage import record_error, record_response
 
 logger = structlog.get_logger(__name__)
 
@@ -50,45 +52,65 @@ class GroqAdapter(LLMClient):
                 return LLMConfigurationError("Groq")
         return LLMProviderError("Groq")
 
+    @llm_operation
     @async_retry(max_retries=3)
     async def generate(self, prompt: str, system: str, budget: TokenBudget) -> str:
         self._check_rate_limit()
-        try:
-            response = await self.client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                model=self.model,
-                temperature=0.1,  # Low temp for factual RAG
-                max_tokens=budget.remaining,
-            )
-        except APIError as exc:
-            raise self._provider_error(exc) from exc
-        content = response.choices[0].message.content or ""
-        if response.choices[0].finish_reason != "stop" or not content.strip():
-            raise ValueError("LLM completion was incomplete or empty")
-        return content
+        with provider_request("groq", self.model, budget.remaining) as request:
+            try:
+                response = await self.client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": prompt},
+                    ],
+                    model=self.model,
+                    temperature=0.1,
+                    max_tokens=budget.remaining,
+                )
+            except APIError as exc:
+                record_error(request, exc)
+                raise self._provider_error(exc) from exc
+            # Account for every completion, including drafts rejected by validation.
+            record_response(request, response)
+            request.finish_reason = response.choices[0].finish_reason
+            content = response.choices[0].message.content or ""
+            if request.finish_reason != "stop" or not content.strip():
+                raise ValueError("LLM completion was incomplete or empty")
+            return content
 
     async def stream(
         self, prompt: str, system: str, budget: TokenBudget
     ) -> AsyncGenerator[str, None]:
-        self._check_rate_limit()
-        try:
-            stream = await self.client.chat.completions.create(
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": prompt},
-                ],
-                model=self.model,
-                temperature=0.1,
-                max_tokens=budget.remaining,
-                stream=True,
-            )
-            async for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield delta
-        except APIError as exc:
-            # Streaming is never replayed after partial output.
-            raise self._provider_error(exc) from exc
+        with llm_call_scope():
+            self._check_rate_limit()
+            with provider_request("groq", self.model, budget.remaining) as request:
+                try:
+                    stream = await self.client.chat.completions.create(
+                        messages=[
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": prompt},
+                        ],
+                        model=self.model,
+                        temperature=0.1,
+                        max_tokens=budget.remaining,
+                        stream=True,
+                    )
+                    try:
+                        async for chunk in stream:
+                            record_response(request, chunk)
+                            if chunk.choices:
+                                request.finish_reason = (
+                                    getattr(chunk.choices[0], "finish_reason", None)
+                                    or request.finish_reason
+                                )
+                                delta = chunk.choices[0].delta.content
+                                if delta:
+                                    yield delta
+                    finally:
+                        close = getattr(stream, "close", None) or getattr(stream, "aclose", None)
+                        if close is not None:
+                            await close()
+                except APIError as exc:
+                    record_error(request, exc)
+                    # Streaming is never replayed after partial output.
+                    raise self._provider_error(exc) from exc

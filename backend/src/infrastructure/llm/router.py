@@ -29,7 +29,11 @@ class LLMRouter(LLMClient):
             try:
                 return await provider.generate(prompt, system, budget)
             except Exception as e:
-                logger.warning(f"Provider {provider.__class__.__name__} failed: {e}")
+                logger.warning(
+                    "llm_provider_failed",
+                    provider=provider.__class__.__name__,
+                    error_type=type(e).__name__,
+                )
                 last_error = e
         if isinstance(last_error, LLMProviderError):
             raise last_error
@@ -45,7 +49,11 @@ class LLMRouter(LLMClient):
                     yield token
                 return  # Success
             except Exception as e:
-                logger.warning(f"Provider {provider.__class__.__name__} stream failed: {e}")
+                logger.warning(
+                    "llm_provider_stream_failed",
+                    provider=provider.__class__.__name__,
+                    error_type=type(e).__name__,
+                )
                 last_error = e
         if isinstance(last_error, LLMProviderError):
             raise last_error

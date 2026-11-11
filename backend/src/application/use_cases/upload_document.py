@@ -2,8 +2,10 @@ import hashlib
 import uuid
 from pathlib import Path
 
+import structlog
+
 from src.core.config import settings
-from src.core.errors import AppError, NotFoundError, ValidationError
+from src.core.errors import AppError, DuplicateDocumentError, NotFoundError, ValidationError
 from src.domain.entities.document import Document, DocumentStatus
 from src.domain.entities.job import Job, JobStatus
 from src.domain.ports.document_repository import DocumentRepository
@@ -11,6 +13,8 @@ from src.domain.ports.job_repository import JobRepository
 from src.domain.value_objects.document_id import DocumentId
 from src.infrastructure.parsers.factory import parser_factory
 from src.infrastructure.queue.celery_app import celery_app
+
+logger = structlog.get_logger(__name__)
 
 
 class UploadDocumentUseCase:
@@ -31,9 +35,8 @@ class UploadDocumentUseCase:
         checksum = hashlib.sha256(file_bytes).hexdigest()
         existing = await self.doc_repo.get_by_checksum(checksum)
         if existing:
-            job = await self.job_repo.latest_for_document(str(existing.id))
-            if job:
-                return existing, job
+            logger.info("document_upload_duplicate", document_id=str(existing.id))
+            raise DuplicateDocumentError(str(existing.id), existing.name)
         doc = Document(
             id=DocumentId.generate(),
             name=Path(file_name).name,
@@ -43,8 +46,22 @@ class UploadDocumentUseCase:
         save_path = self._path(doc)
         save_path.parent.mkdir(parents=True, exist_ok=True)
         save_path.write_bytes(file_bytes)
-        await self.doc_repo.save(doc)
-        return doc, await self._enqueue(doc, save_path)
+        try:
+            await self.doc_repo.save(doc)
+        except Exception:
+            # This request owns this newly generated path, including if a concurrent
+            # upload wins the database's unique-checksum constraint.
+            save_path.unlink(missing_ok=True)
+            raise
+        job = await self._enqueue(doc, save_path)
+        logger.info(
+            "document_upload_queued",
+            document_id=str(doc.id),
+            job_id=job.job_id,
+            file_type=file_type,
+            size_bytes=len(file_bytes),
+        )
+        return doc, job
 
     def _path(self, doc: Document) -> Path:
         return Path(settings.DATA_DIR) / "uploads" / f"{doc.id}.{doc.file_type}"

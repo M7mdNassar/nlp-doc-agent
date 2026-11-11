@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from src.api.dependencies.providers import get_ask_question_uc
 from src.application.use_cases.ask_question import AskQuestionUseCase
+from src.core.observability import current_trace
 from src.domain.entities.answer import ChatResult
 from src.domain.value_objects.metadata_filters import MetadataFilters
 
@@ -23,4 +24,9 @@ class ChatRequest(BaseModel):
 async def chat(
     request: ChatRequest, uc: Annotated[AskQuestionUseCase, Depends(get_ask_question_uc)]
 ) -> ChatResult:
-    return await uc.execute(request.message, request.conversation_id, request.filters)
+    result = await uc.execute(request.message, request.conversation_id, request.filters)
+    trace = current_trace()
+    if trace:
+        result["question_id"] = trace.question_id
+        result["usage"] = trace.summary()
+    return result

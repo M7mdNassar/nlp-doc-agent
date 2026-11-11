@@ -17,7 +17,11 @@ The current API is a local single-user service without authentication. Chat retu
 
 Job statuses: queued, processing, completed, failed.
 Document statuses: queued, parsing, embedding, indexed, failed.
-A duplicate checksum returns the existing document/job; use reindex to retry failed ingestion or upgrade old metadata.
+A duplicate checksum returns HTTP 409 `DOCUMENT_ALREADY_EXISTS`, with the existing
+`document_id` and `document_name` in `details`. This also covers concurrent uploads
+and renamed copies. No new document or ingestion job is created. Use reindex to
+retry failed ingestion or upgrade old metadata. Different bytes with the same name
+are allowed; PDF and DOCX versions are not treated as byte-identical uploads.
 
 ## POST /chat
 
@@ -80,12 +84,21 @@ Response fields:
     }
 
 state is answer_ready or insufficient_evidence. loops counts additional retrieval rounds (0 to 2).
+Successful chat responses additionally include `question_id` and `usage` (token totals,
+provider attempts, retry waits, per-call records and stage timings). `X-Question-ID`
+is also returned as a header. Each turn gets its own ID, independent of conversation ID.
+Provider/application failures include these diagnostics in `details`; 422 validation
+responses include the header. See [question diagnostics](observability.md) for fields
+and log-filtering commands. Missing provider usage is flagged as unknown rather than
+assumed to be zero.
 Insufficient evidence or rejected answer validation produces an explicit refusal with no sources.
 For DOCX/TXT/Markdown, location is the citation locator; page=1 is an internal logical container, not a rendered physical page.
 
 ## Errors
 
-Application errors contain code, message, and details. Missing resources return 404; upload/reindex validation returns 400; queue submission failure returns 503. FastAPI request/schema validation uses its standard 422 detail response.
+Application errors contain code, message, and details. Missing resources return 404;
+duplicate uploads return 409; upload/reindex validation returns 400; queue submission
+failure returns 503. FastAPI request/schema validation uses its standard 422 detail response.
 
 Provider failures are service errors, not `200 insufficient_evidence` answers:
 

@@ -1,16 +1,18 @@
 import asyncio
 import functools
-import logging
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
+import structlog
+
+from src.core.observability import retry_wait
 from src.domain.exceptions.llm_provider_error import (
     LLMConfigurationError,
     LLMCooldownError,
     LLMRateLimitError,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -44,25 +46,32 @@ def async_retry(
                         or delay_hint <= 0
                         or rate_limit_wait + delay_hint > max_rate_limit_wait
                     ):
+                        logger.warning(
+                            "llm_retry_stopped",
+                            provider_attempts=provider_attempts,
+                            planned_wait_seconds=delay_hint,
+                            wait_budget_seconds=max_rate_limit_wait,
+                            wait_used_seconds=rate_limit_wait,
+                        )
                         raise
                     rate_limit_wait += delay_hint
-                    logger.log(
-                        logging.INFO if local_cooldown else logging.WARNING,
-                        "LLM %s. Honoring Retry-After of %ss.",
-                        "local cooldown" if local_cooldown else "rate limited",
-                        delay_hint,
-                    )
-                    await asyncio.sleep(delay_hint)
+                    with retry_wait(
+                        delay_hint, "local_cooldown" if local_cooldown else "rate_limit"
+                    ):
+                        await asyncio.sleep(delay_hint)
                 except Exception as e:
                     provider_attempts += 1
                     if provider_attempts >= max_retries:
                         raise
                     delay = base_delay * (2 ** (provider_attempts - 1))
                     logger.warning(
-                        f"LLM call failed (attempt {provider_attempts}/{max_retries}). "
-                        f"Retrying in {delay}s. Error: {e}"
+                        "llm_retry_scheduled",
+                        attempt=provider_attempts,
+                        error_type=type(e).__name__,
+                        delay_seconds=delay,
                     )
-                    await asyncio.sleep(delay)
+                    with retry_wait(delay, "transient_error"):
+                        await asyncio.sleep(delay)
             return None
 
         return cast(F, wrapper)

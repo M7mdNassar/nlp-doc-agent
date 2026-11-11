@@ -1,4 +1,5 @@
-from contextlib import asynccontextmanager
+import json
+from contextlib import asynccontextmanager, suppress
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -7,7 +8,8 @@ import pytest
 from fastapi import UploadFile
 from httpx import ASGITransport, AsyncClient
 
-from src.core.errors import ValidationError
+from src.core.errors import DuplicateDocumentError, ValidationError
+from src.core.observability import current_trace, stage
 from src.domain.entities.document import Document
 from src.domain.entities.job import Job, JobStatus
 from src.domain.exceptions.llm_provider_error import (
@@ -63,6 +65,9 @@ async def test_chat_dependency_and_response(api, client):
 
     assert response.status_code == 200
     assert response.json() == result
+    assert response.json()["question_id"] == response.headers["x-question-id"]
+    assert response.json()["usage"]["provider_requests"] == 0
+    assert current_trace() is None
     uc.execute.assert_awaited_once_with("Question?", None, None)
 
 
@@ -272,3 +277,80 @@ async def test_chat_provider_failures_are_service_errors(
     assert response.headers.get("retry-after") == retry_after
     assert body["details"].get("retry_after_seconds") == (int(retry_after) if retry_after else None)
     assert response.headers["cache-control"] == "no-store"
+    assert body["details"]["question_id"] == response.headers["x-question-id"]
+    assert "usage" in body["details"]
+
+
+async def test_duplicate_upload_is_a_clear_conflict(api, client):
+    app, providers = api
+    uc = SimpleNamespace(
+        execute=AsyncMock(side_effect=DuplicateDocumentError("doc_existing", "original.pdf"))
+    )
+    app.dependency_overrides[providers.get_upload_doc_uc] = lambda: uc
+    response = await client.post(
+        "/documents", files={"file": ("renamed.pdf", b"same", "application/pdf")}
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == "DOCUMENT_ALREADY_EXISTS"
+    assert response.json()["details"]["document_id"] == "doc_existing"
+    assert "already uploaded" in response.json()["message"]
+    assert "job_id" not in response.json()
+
+
+async def test_question_ids_cover_validation_errors_and_are_unique(api, client):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock())
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    first = await client.post("/chat", json={"message": ""})
+    second = await client.post("/chat", json={"message": ""})
+    assert first.status_code == second.status_code == 422
+    assert first.headers["x-question-id"] != second.headers["x-question-id"]
+    assert current_trace() is None
+    uc.execute.assert_not_awaited()
+
+
+async def test_unexpected_question_failure_has_safe_diagnostics(api, client):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock(side_effect=RuntimeError("private document text")))
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    response = await client.post("/chat", json={"message": "q"})
+    assert response.status_code == 500
+    assert response.json()["details"]["question_id"] == response.headers["x-question-id"]
+    assert "private document text" not in response.text
+
+
+async def test_chat_logs_and_response_group_real_adapter_usage(api, client, monkeypatch, caplog):
+    import logging
+
+    from src.domain.value_objects.token_budget import TokenBudget
+    from tests.test_llm_provider_errors import adapter_with, rate_error
+    from tests.test_observability import completion
+
+    app, providers = api
+    adapter, _, _ = adapter_with(monkeypatch, [completion(), rate_error("900")])
+
+    async def execute(*args):
+        with stage("query_rewrite"):
+            await adapter.generate("PRIVATE_QUESTION", "PRIVATE_SOURCE", TokenBudget(100))
+        with stage("tool_plan"):
+            await adapter.generate("PRIVATE_QUESTION", "PRIVATE_SOURCE", TokenBudget(100))
+
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: SimpleNamespace(
+        execute=execute
+    )
+    with caplog.at_level(logging.INFO):
+        response = await client.post("/chat", json={"message": "PRIVATE_QUESTION"})
+    assert response.status_code == 429
+    details = response.json()["details"]
+    assert details["usage"]["total_tokens"] == 125
+    assert details["usage"]["provider_requests"] == 2
+    events = []
+    for record in caplog.records:
+        with suppress(ValueError):
+            events.append(json.loads(record.getMessage()))
+    requests = [e for e in events if e.get("event") == "llm_request_completed"]
+    assert len(requests) == 2
+    assert all(e["question_id"] == details["question_id"] for e in requests)
+    assert [e["stage"] for e in requests] == ["query_rewrite", "tool_plan"]
+    assert any(e.get("event") == "question_completed" for e in events)
+    assert "PRIVATE_" not in caplog.text

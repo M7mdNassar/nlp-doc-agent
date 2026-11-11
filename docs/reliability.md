@@ -11,7 +11,9 @@ Implemented behavior:
 - Analyst findings and answers must preserve material qualifications of the claims they include, including simulation/validation settings, baselines, units, approximations and uncertainty. The final review separately checks factual support, qualification preservation and absence of added details; every check must pass for every block. A simulation-based evaluation does not by itself establish synthetic input data or the absence of real observations. These semantic checks remain model-based, not a formal guarantee.
 - A rejected quality review supplies feedback for up to two corrected answers using the same evidence. Corrections omit unverified Analyst findings and must pass citation and all quality checks; three rejected answers fail closed. This adds at most two answer/review cycles without increasing retrieval rounds.
 - Arithmetic and statistical tools run deterministic code over source-validated inputs. No generated Python/eval/shell is executed.
-- Matching checksums reuse existing uploads. Reindexing replaces document vectors/chunks and preserves the document ID.
+- Matching checksums reject duplicate uploads with HTTP 409 and the existing document ID. The database's unique index resolves concurrent uploads, with cleanup of the losing request's file. Reindexing replaces document vectors/chunks and preserves the document ID.
+- Every chat request has an independent question ID, per-stage timings, actual provider usage and retry/wait diagnostics, including failures and rejected completions. Missing provider accounting remains explicitly unknown. See [observability](observability.md).
+- Identical source text is serialized once per prompt with references that retain document/citation identities. Verification keeps surrounding qualifications and per-block citation scope; differing source wording is not merged. Similar chunks are not discarded solely because most words overlap.
 - Worker job status is persisted as processing/completed/failed, including failures during model initialization and parsing. Exceptions propagate to Celery.
 - Migrations preserve existing document records; production Docker images include ML dependencies.
 
@@ -23,7 +25,7 @@ Limits:
 - DOCX has no reliable rendered pagination; references use native block/section locations. TXT/Markdown use line ranges.
 - Very large tables may exceed the selected context budget; the system should report insufficient evidence rather than silently promise complete analysis.
 - SQLite and Qdrant replacement is not an atomic distributed transaction. Retry reindexing after a failed replacement.
-- Duplicate concurrent uploads/reindex requests are not protected by a distributed per-document lock.
+- Concurrent uploads are protected by the database unique-checksum constraint. Concurrent reindex requests are not protected by a distributed per-document lock.
 - Response caching, provider failover, SSE, automatic OCR, tracing guarantees, and per-user rate limits from the original design are not implemented.
 - Changing the embedding model to one with a different vector dimension requires a separately planned Qdrant migration; the current collection expects 384 dimensions.
 

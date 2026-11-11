@@ -2,6 +2,7 @@ from typing import Any
 
 from fastembed import SparseTextEmbedding
 
+from src.core.observability import stage
 from src.domain.entities.evidence import EvidencePackage
 from src.domain.ports.embedder import Embedder
 from src.domain.ports.reranker import Reranker
@@ -21,27 +22,32 @@ class RetrieverAgent:
 
     async def retrieve(self, query: str, filters: dict[str, Any] | None = None) -> EvidencePackage:
         # 1. Embed Query (Dense)
-        dense_vector = await self.embedder.embed_query(query)
+        with stage("dense_embedding"):
+            dense_vector = await self.embedder.embed_query(query)
 
         # 2. Embed Query (Sparse)
-        sparse_embedding = list(self.sparse_model.query_embed(query))[0]
-        sparse_vector = SparseVector(
-            indices=sparse_embedding.indices.tolist(), values=sparse_embedding.values.tolist()
-        )
+        with stage("sparse_embedding"):
+            sparse_embedding = list(self.sparse_model.query_embed(query))[0]
+            sparse_vector = SparseVector(
+                indices=sparse_embedding.indices.tolist(), values=sparse_embedding.values.tolist()
+            )
 
         # 3. Hybrid Search in Qdrant
-        evidence = await self.vector_store.hybrid_search(
-            query_dense=dense_vector,
-            query_sparse=sparse_vector,
-            filters=filters or {},
-            limit=20,  # Get top 20 candidates
-        )
+        with stage("vector_search") as metrics:
+            evidence = await self.vector_store.hybrid_search(
+                query_dense=dense_vector,
+                query_sparse=sparse_vector,
+                filters=filters or {},
+                limit=20,  # Get top 20 candidates
+            )
+            metrics["candidate_chunks"] = len(evidence.chunks)
 
         if evidence.is_empty:
             return evidence
 
         # 4. Rerank (Top 20 -> Top 8)
-        reranked_chunks = await self.reranker.rerank(query, evidence.chunks, top_k=20)
+        with stage("reranking", candidate_chunks=len(evidence.chunks)):
+            reranked_chunks = await self.reranker.rerank(query, evidence.chunks, top_k=20)
 
         return EvidencePackage.from_chunks(
             self.selector.select(reranked_chunks), evidence.diagnostics

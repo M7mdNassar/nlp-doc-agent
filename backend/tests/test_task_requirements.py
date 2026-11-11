@@ -136,6 +136,15 @@ def test_context_selector_deduplicates_and_keeps_document_coverage_within_budget
     assert ContextSelector(len, max_tokens=1).select([first]) == []
 
 
+def test_context_selector_preserves_a_small_but_material_source_difference():
+    first = passage(92)
+    first.text = "The traffic project improved measured vehicle throughput using the adaptive traffic signal recommendations based on real drone observations during simulation."
+    different = replace(
+        first, id=ChunkId.generate(), text=first.text.replace("simulation", "deployment")
+    )
+    assert len(ContextSelector(len, max_tokens=2000).select([first, different])) == 2
+
+
 def test_natural_metadata_constraints_and_unknown_files_do_not_widen_search():
     doc = Document(DocumentId.generate(), "paper.pdf", "pdf", "sum")
     resolved = MetadataFilterResolver().resolve(
@@ -283,6 +292,40 @@ async def test_analyst_executes_tools_and_passes_results_to_verdict():
     assert result.has_enough_evidence
     assert result.tool_results[0].output["result"] == "93.5"
     assert "93.5" in llm.generate.await_args.args[0]
+
+
+async def test_analyst_shared_text_preserves_multiple_source_identities():
+    first = passage(92)
+    second = replace(first, id=ChunkId.generate(), document_id=DocumentId.generate())
+    llm = SimpleNamespace(
+        generate=AsyncMock(
+            side_effect=[
+                '{"tools":[]}',
+                json.dumps(
+                    {
+                        "has_enough_evidence": True,
+                        "missing_info": "",
+                        "findings": [
+                            {
+                                "text": "Both report 92%.",
+                                "chunk_ids": [str(first.id), str(second.id)],
+                            }
+                        ],
+                    }
+                ),
+            ]
+        )
+    )
+    result = await AnalystAgent(llm).analyze("Compare", EvidencePackage(chunks=[first, second]))
+    assert result.has_enough_evidence
+    payload = json.loads(llm.generate.await_args_list[0].args[0])
+    assert len(payload["texts"]) == 1
+    assert {item["document_id"] for item in payload["evidence"]} == {
+        str(first.document_id),
+        str(second.document_id),
+    }
+    for item in payload["evidence"]:
+        assert payload["texts"][item["text_id"]] == first.text
 
 
 @pytest.mark.parametrize("bad", ['"false"', '"true"', "1", "null"])

@@ -38,7 +38,18 @@ class ContextSelector:
                         continue
                     other = set(re.findall(r"\w+", previous.text.casefold()))
                     overlap = max(overlap, len(words & other) / max(1, len(words | other)))
-                if any(c.id == chunk.id for c in selected) or overlap >= 0.9:
+                # Similar wording can still differ in a number, negation, or caveat.
+                # Only discard exact duplicates within one document; cross-document
+                # text is shared in prompts while keeping both source identities.
+                if any(
+                    c.id == chunk.id
+                    or (
+                        c.document_id == chunk.document_id
+                        and c.text == chunk.text
+                        and c.table_data == chunk.table_data
+                    )
+                    for c in selected
+                ):
                     continue
                 score = 1 / (rank + 1) + 0.35 * (counts[doc_id] == 0) - 0.4 * overlap
                 if score > best_score:

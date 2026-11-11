@@ -12,6 +12,7 @@ from src.application.agents.retriever.metadata_filter import MetadataFilterResol
 from src.application.agents.retriever.query_rewriter import QueryRewriter
 from src.application.agents.retriever.retriever_agent import RetrieverAgent
 from src.application.citations.verifier import INSUFFICIENT_ANSWER, CitationVerifier
+from src.core.observability import stage
 from src.domain.entities.analysis import AnalysisResult
 from src.domain.entities.answer import ChatResult
 from src.domain.entities.document import Document
@@ -58,7 +59,8 @@ class Orchestrator:
         documents: list[Document] | None = None,
     ) -> ChatResult:
         evidence = EvidencePackage()
-        resolved_question = await self.rewriter.rewrite(question, history)
+        with stage("query_rewrite", history_messages=len(history or [])):
+            resolved_question = await self.rewriter.rewrite(question, history)
         if documents is not None:
             filters = (
                 MetadataFilterResolver()
@@ -72,11 +74,21 @@ class Orchestrator:
         round_index = 0
         for attempt in range(self.max_rounds):
             round_index = attempt
-            retrieved = await self.retriever.retrieve(current_query, filters)
+            with stage("retrieval", retrieval_round=attempt + 1) as metrics:
+                retrieved = await self.retriever.retrieve(current_query, filters)
+                metrics["retrieved_chunks"] = len(retrieved.chunks)
             combined = {str(c.id): c for c in evidence.chunks}
             combined.update({str(c.id): c for c in retrieved.chunks})
-            evidence = EvidencePackage.from_chunks(self.selector.select(list(combined.values())))
-            analysis = await self.analyst.analyze(resolved_question, evidence)
+            with stage("context_selection", candidate_chunks=len(combined)) as metrics:
+                evidence = EvidencePackage.from_chunks(
+                    self.selector.select(list(combined.values()))
+                )
+                metrics["selected_chunks"] = len(evidence.chunks)
+                metrics["selected_characters"] = sum(len(c.text) for c in evidence.chunks)
+            with stage("analysis", retrieval_round=attempt + 1) as metrics:
+                analysis = await self.analyst.analyze(resolved_question, evidence)
+                metrics["has_enough_evidence"] = analysis.has_enough_evidence
+                metrics["conflict_detected"] = analysis.conflict_detected
             if analysis.has_enough_evidence:
                 break
             current_query = (
@@ -98,14 +110,20 @@ class Orchestrator:
         try:
             review_feedback = None
             for answer_attempt in range(self.MAX_ANSWER_ATTEMPTS):
-                if review_feedback is None:
-                    draft = await self.answer_agent.generate(resolved_question, evidence, analysis)
-                else:
-                    draft = await self.answer_agent.generate(
-                        resolved_question, evidence, analysis, review_feedback=review_feedback
-                    )
-                self.verifier.validate(draft, evidence)
-                review = await self.answer_agent.review(draft, evidence, analysis)
+                with stage("answer_generation", answer_attempt=answer_attempt + 1):
+                    if review_feedback is None:
+                        draft = await self.answer_agent.generate(
+                            resolved_question, evidence, analysis
+                        )
+                    else:
+                        draft = await self.answer_agent.generate(
+                            resolved_question, evidence, analysis, review_feedback=review_feedback
+                        )
+                with stage("citation_validation"):
+                    self.verifier.validate(draft, evidence)
+                with stage("answer_verification", answer_attempt=answer_attempt + 1) as metrics:
+                    review = await self.answer_agent.review(draft, evidence, analysis)
+                    metrics["accepted"] = review.accepts(len(draft.blocks))
                 if review.accepts(len(draft.blocks)):
                     result["answer"], result["sources"] = self.verifier.format(draft, evidence)
                     result["state"] = State.ANSWER_READY.value
@@ -132,5 +150,5 @@ class Orchestrator:
         except LLMProviderError:
             raise
         except Exception as exc:
-            logger.warning("answer_rejected", error=str(exc))
+            logger.warning("answer_rejected", error_type=type(exc).__name__)
         return result

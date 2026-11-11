@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sqlite3
 import subprocess
@@ -14,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.application.use_cases.upload_document import UploadDocumentUseCase
 from src.core.config import settings
-from src.core.errors import ValidationError
+from src.core.errors import DuplicateDocumentError, ValidationError
 from src.domain.entities.chunk import Chunk
 from src.domain.entities.conversation import Conversation
 from src.domain.entities.document import Document, DocumentStatus
@@ -138,8 +139,10 @@ async def test_upload_deduplicates_and_reindex_preserves_document_id(
         documents, jobs = DocumentRepository(session), JobRepository(session)
         use_case = UploadDocumentUseCase(documents, jobs)
         doc, job = await use_case.execute("sample.txt", "txt", b"Example content")
-        same_doc, same_job = await use_case.execute("copy.txt", "txt", b"Example content")
-        assert same_doc.id == doc.id and same_job.job_id == job.job_id
+        with pytest.raises(DuplicateDocumentError) as duplicate:
+            await use_case.execute("copy.txt", "txt", b"Example content")
+        assert duplicate.value.status_code == 409
+        assert duplicate.value.details["document_id"] == str(doc.id)
         assert len(send) == 1 and send[0]["args"][2] == job.job_id
         # Pre-upgrade jobs could remain queued even though their documents were indexed.
         doc.status = DocumentStatus.INDEXED
@@ -147,6 +150,69 @@ async def test_upload_deduplicates_and_reindex_preserves_document_id(
         reindexed, new_job = await use_case.reindex(doc.id)
         assert reindexed.id == doc.id and new_job.job_id != job.job_id
         assert len(send) == 2
+
+
+async def test_simultaneous_duplicate_uploads_create_one_document_job_and_file(
+    database, monkeypatch, tmp_path
+):
+    from src.application.use_cases import upload_document
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
+    send = []
+    monkeypatch.setattr(upload_document.celery_app, "send_task", lambda *a, **k: send.append(k))
+    barrier = asyncio.Barrier(2)
+
+    async def upload():
+        async with database() as session:
+            repo = DocumentRepository(session)
+            lookup = repo.get_by_checksum
+            first = True
+
+            async def synchronized_lookup(checksum):
+                nonlocal first
+                result = await lookup(checksum)
+                if first:
+                    first = False
+                    await barrier.wait()
+                return result
+
+            monkeypatch.setattr(repo, "get_by_checksum", synchronized_lookup)
+            return await UploadDocumentUseCase(repo, JobRepository(session)).execute(
+                "race.txt", "txt", b"same content"
+            )
+
+    results = await asyncio.gather(upload(), upload(), return_exceptions=True)
+    assert sum(isinstance(r, DuplicateDocumentError) for r in results) == 1
+    assert sum(isinstance(r, tuple) for r in results) == 1
+    async with database() as session:
+        assert len(await DocumentRepository(session).list_all()) == 1
+        assert len((await session.scalars(select(JobModel))).all()) == 1
+    assert len(send) == 1
+    assert len(list((tmp_path / "uploads").iterdir())) == 1
+
+
+async def test_duplicate_without_job_is_rejected_and_changed_file_is_allowed(
+    database, monkeypatch, tmp_path
+):
+    import hashlib
+
+    from src.application.use_cases import upload_document
+
+    monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(upload_document.celery_app, "send_task", lambda *a, **k: None)
+    async with database() as session:
+        repo = DocumentRepository(session)
+        doc = Document(DocumentId.generate(), "same.txt", "txt", hashlib.sha256(b"old").hexdigest())
+        await repo.save(doc)
+        uc = UploadDocumentUseCase(repo, JobRepository(session))
+        with pytest.raises(DuplicateDocumentError):
+            await uc.execute("renamed.txt", "txt", b"old")
+        assert not (tmp_path / "uploads").exists()
+        changed, _ = await uc.execute("same.txt", "txt", b"new")
+        assert changed.id != doc.id
+        await repo.delete(doc.id)
+        uploaded_again, _ = await uc.execute("same.txt", "txt", b"old")
+        assert uploaded_again.id != doc.id
 
 
 @pytest.mark.parametrize(("file_type", "content"), [("exe", b"x"), ("txt", b"")])

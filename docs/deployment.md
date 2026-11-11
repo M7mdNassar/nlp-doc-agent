@@ -126,6 +126,27 @@ change the database. It checks incorrect drafts as well as a newly generated sum
 
 ## Container changes
 
+### Duplicate uploads, question diagnostics, and source sharing
+
+Rebuild the backend to install these changes:
+
+```powershell
+docker compose -f docker-compose.yml up -d --build --no-deps backend
+```
+
+Wait for [backend health](http://localhost:8000/health) to respond after model warmup.
+Then open [Swagger](http://localhost:8000/docs) or refresh Folio. There are no new
+dependencies, environment variables, schema migrations, or volume changes. No worker
+or frontend rebuild, document reupload, or reindex is required. Existing documents
+and conversations remain available. Leave sufficient free disk space for the image
+build and model cache; do not reset Docker volumes to install this update.
+
+Duplicate uploads now display the API's "already uploaded" message through the
+existing frontend error handling. Chat response JSON includes `question_id` and
+`usage`, and application logs contain correlated timing/token events. See
+[observability](observability.md) for commands to investigate one question and
+interpret partial usage after provider failures.
+
 ### Provider error reporting update
 
 If upgrading from a version that displayed Groq quota errors as "Not enough verified evidence", rebuild only the API and frontend:

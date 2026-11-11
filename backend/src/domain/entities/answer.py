@@ -1,4 +1,4 @@
-from typing import Any, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 from pydantic import Field
 
@@ -56,6 +56,8 @@ class Source(TypedDict):
 
 
 class ChatResult(TypedDict):
+    question_id: NotRequired[str]
+    usage: NotRequired[dict[str, Any]]
     answer: str
     state: str
     loops: int

@@ -16,6 +16,7 @@ from src.application.use_cases.delete_document import DeleteDocumentUseCase
 from src.application.use_cases.get_job_status import GetJobStatusUseCase
 from src.application.use_cases.list_documents import ListDocumentsUseCase
 from src.application.use_cases.upload_document import UploadDocumentUseCase
+from src.core.observability import stage
 from src.infrastructure.relational.db import get_db_session
 from src.infrastructure.relational.repositories.conversation_repository import (
     ConversationRepository,
@@ -93,6 +94,11 @@ def get_job_status_uc(session: DBSession) -> GetJobStatusUseCase:
 
 
 def get_ask_question_uc(session: DBSession) -> AskQuestionUseCase:
+    with stage("dependency_setup"):
+        return _build_ask_question_uc(session)
+
+
+def _build_ask_question_uc(session: AsyncSession) -> AskQuestionUseCase:
     rewriter = QueryRewriter(get_llm())
     retriever = RetrieverAgent(
         get_embedder(),

@@ -23,6 +23,16 @@ class ValidationError(AppError):
         super().__init__("VALIDATION_ERROR", message, 400, details)
 
 
+class DuplicateDocumentError(AppError):
+    def __init__(self, document_id: str, document_name: str):
+        super().__init__(
+            "DOCUMENT_ALREADY_EXISTS",
+            f'This file is already uploaded as "{document_name}". Use the existing document or reindex it.',
+            409,
+            {"document_id": document_id, "document_name": document_name},
+        )
+
+
 class NotFoundError(AppError):
     def __init__(self, resource: str, resource_id: str):
         super().__init__("NOT_FOUND", f"{resource} with ID {resource_id} not found.", 404)
