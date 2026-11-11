@@ -1,0 +1,21 @@
+services:
+  backend:
+    image: nlp-doc-agent-backend-gpu:test
+    build:
+      context: .
+      dockerfile: infrastructure/docker/backend.gpu.Dockerfile
+    environment:
+      RERANKER_DEVICE: "${RERANKER_DEVICE:-cuda}"
+      HF_HOME: /app/model-cache
+    volumes:
+      - gpu_model_cache:/app/model-cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  gpu_model_cache:
