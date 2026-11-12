@@ -178,7 +178,10 @@ async def test_run_uses_existing_index_without_saving_a_conversation(
         rewriter=agent(),
         analyst=agent(),
         answer_agent=agent(),
-        retriever=SimpleNamespace(reranker=SimpleNamespace(model=SimpleNamespace(device="cpu"))),
+        retriever=SimpleNamespace(
+            reranker=SimpleNamespace(model=SimpleNamespace(device="cpu")),
+            embedder=SimpleNamespace(model=SimpleNamespace(device="cuda:0")),
+        ),
         process=AsyncMock(return_value={"state": "insufficient_evidence"}),
     )
     uc = SimpleNamespace(orchestrator=orchestrator, execute=AsyncMock())
@@ -190,6 +193,7 @@ async def test_run_uses_existing_index_without_saving_a_conversation(
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data["document"]["id"] == str(sample_document.id)
     assert data["actual_reranker_device"] == "cpu"
+    assert data["actual_embedding_device"] == "cuda:0"
     orchestrator.process.assert_awaited_once_with(
         "q",
         filters={"doc_ids": [str(sample_document.id)]},

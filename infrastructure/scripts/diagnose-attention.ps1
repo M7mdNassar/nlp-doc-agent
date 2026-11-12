@@ -27,7 +27,7 @@ try {
     & docker @composeArgs run --rm --no-deps -T `
         --volume "${captureScript}:/tmp/diagnose_question.py:ro" `
         --volume "${diagnosticDir}:/diagnostics" `
-        -e PYTHONPATH=/app -e "RERANKER_DEVICE=$device" `
+        -e PYTHONPATH=/app -e "RERANKER_DEVICE=$device" -e "EMBEDDING_DEVICE=$device" `
         --entrypoint python backend /tmp/diagnose_question.py `
         --output "/diagnostics/$fileName"
     $diagnosticExit = $LASTEXITCODE

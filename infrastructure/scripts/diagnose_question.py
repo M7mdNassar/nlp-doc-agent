@@ -198,9 +198,13 @@ async def run(output: Path, question: str, document_name: str) -> int:
             database_engine = engine
             capture.data["settings"] = {
                 "llm_model": settings.LLM_MODEL,
+                "llm_fallback_models": settings.LLM_FALLBACK_MODELS,
                 "embedding_model": settings.EMBEDDING_MODEL,
+                "requested_embedding_device": settings.EMBEDDING_DEVICE,
+                "embedding_batch_size": settings.EMBEDDING_BATCH_SIZE,
                 "reranker_model": settings.RERANKER_MODEL,
-                "requested_reranker_device": os.environ.get("RERANKER_DEVICE", "cpu"),
+                "requested_reranker_device": settings.RERANKER_DEVICE,
+                "reranker_batch_size": settings.RERANKER_BATCH_SIZE,
             }
             async with AsyncSessionLocal() as session:
                 with stage("document_lookup"):
@@ -214,6 +218,9 @@ async def run(output: Path, question: str, document_name: str) -> int:
                 uc = get_ask_question_uc(session)
                 capture.data["actual_reranker_device"] = str(
                     uc.orchestrator.retriever.reranker.model.device
+                )
+                capture.data["actual_embedding_device"] = str(
+                    uc.orchestrator.retriever.embedder.model.device
                 )
                 attach_capture(uc.orchestrator, capture)
                 # Call the same orchestrator directly to avoid saving a conversation.

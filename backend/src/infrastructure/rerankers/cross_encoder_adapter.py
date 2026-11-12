@@ -1,3 +1,4 @@
+from src.core.config import settings
 from src.domain.entities.chunk import Chunk
 from src.domain.ports.reranker import Reranker
 
@@ -16,7 +17,7 @@ class CrossEncoderAdapter(Reranker):
         pairs = [(query, chunk.text) for chunk in chunks]
 
         # Predict scores
-        scores = self.model.predict(pairs)
+        scores = self.model.predict(pairs, batch_size=settings.RERANKER_BATCH_SIZE)
 
         # Attach scores to chunks and sort
         scored_chunks = list(zip(chunks, scores, strict=True))

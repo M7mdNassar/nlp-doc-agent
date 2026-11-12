@@ -205,11 +205,19 @@ answer-quality verification still run, and genuine quota exhaustion still return
 No frontend/worker rebuild, dependency update, environment change, migration, reindex, or
 volume reset is required. Wait for backend startup/model warmup before retrying in Folio.
 
+### GPU inference and ordered Groq fallback
+
+See [GPU and model fallback](gpu-and-model-fallback.md) for the new configuration,
+commands, CUDA verification, 4 GB memory limits, and fallback behavior. The GPU
+override now moves dense embeddings in backend/worker and backend reranking to
+CUDA. Both containers need rebuilding. No migration or reindex is required for
+these device/router changes.
+
 ### Existing image configuration
 
 - Production backend and worker install uv sync --frozen --no-dev --extra ml --no-cache.
 - Development stages install all extras with the frozen lockfile and --no-cache.
-- Linux and Windows use CPU-only PyTorch from the official PyTorch CPU index. The refreshed lockfile excludes CUDA/NVIDIA dependencies; no GPU is required. macOS retains its PyPI source.
+- Base Linux and Windows installs use CPU-only PyTorch from the official PyTorch CPU index. No GPU is required for base Compose. The optional `docker-compose.gpu.yml` installs CUDA PyTorch through the existing GPU Dockerfile for backend and worker. macOS retains its PyPI source.
 - Disabling uv's download cache during image builds avoids retaining package archives in the image layers. Docker layer caching still works normally.
 - The migrate service runs alembic upgrade head and gates API/worker startup.
 - .env.example documents the existing required settings and optional LLM_MODEL/MAX_UPLOAD_BYTES.

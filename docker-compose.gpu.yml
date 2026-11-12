@@ -6,9 +6,35 @@ services:
       dockerfile: infrastructure/docker/backend.gpu.Dockerfile
     environment:
       RERANKER_DEVICE: "${RERANKER_DEVICE:-cuda}"
+      EMBEDDING_DEVICE: "${EMBEDDING_DEVICE:-cuda}"
+      RERANKER_BATCH_SIZE: "${RERANKER_BATCH_SIZE:-4}"
+      EMBEDDING_BATCH_SIZE: "${EMBEDDING_BATCH_SIZE:-4}"
       HF_HOME: /app/model-cache
     volumes:
       - gpu_model_cache:/app/model-cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  worker:
+    # Reuse the CUDA image; the worker only loads the embedding model.
+    image: nlp-doc-agent-backend-gpu:test
+    build:
+      context: .
+      dockerfile: infrastructure/docker/backend.gpu.Dockerfile
+    environment:
+      EMBEDDING_DEVICE: "${EMBEDDING_DEVICE:-cuda}"
+      EMBEDDING_BATCH_SIZE: "${EMBEDDING_BATCH_SIZE:-4}"
+      HF_HOME: /app/model-cache
+    volumes:
+      - gpu_model_cache:/app/model-cache
+    # CUDA must not be initialized inside a prefork Celery child. One process
+    # also prevents each CPU core from loading another GPU model on a 4 GB card.
+    command: celery -A src.worker.main worker --loglevel=info --pool=solo --concurrency=1 --prefetch-multiplier=1
     deploy:
       resources:
         reservations:

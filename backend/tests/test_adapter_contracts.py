@@ -49,7 +49,8 @@ async def test_groq_stream_is_directly_async_iterable(monkeypatch):
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
     monkeypatch.setattr(groq_adapter, "AsyncGroq", lambda **kwargs: client)
     adapter = groq_adapter.GroqAdapter()
-    monkeypatch.setattr(router, "GroqAdapter", lambda: adapter)
+    monkeypatch.setattr(router.settings, "LLM_FALLBACK_MODELS", [])
+    monkeypatch.setattr(router, "GroqAdapter", lambda **kwargs: adapter)
 
     tokens = [token async for token in router.LLMRouter().stream("q", "s", TokenBudget(10))]
 
@@ -151,7 +152,7 @@ async def test_reranker_preserves_score_alignment_and_rejects_missing_scores(mon
     chunks = [make_chunk(), make_chunk()]
 
     assert await adapter.rerank("q", chunks, top_k=1) == [chunks[1]]
-    model.predict.assert_called_once_with([("q", chunk.text) for chunk in chunks])
+    model.predict.assert_called_once_with([("q", chunk.text) for chunk in chunks], batch_size=4)
     with pytest.raises(ValueError):
         await adapter.rerank("q", chunks)
 

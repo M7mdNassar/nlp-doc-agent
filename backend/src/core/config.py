@@ -21,10 +21,22 @@ class Settings(BaseSettings):
     DATA_DIR: str = Field(default="/app/data")
     MAX_UPLOAD_BYTES: int = Field(default=50 * 1024 * 1024, gt=0)
     LLM_MODEL: str = Field(default="openai/gpt-oss-120b")
+    # Ordered JSON array in .env. Set [] to disable fallback.
+    LLM_FALLBACK_MODELS: list[str] = Field(
+        default_factory=lambda: [
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
+            "openai/gpt-oss-safeguard-20b",
+        ]
+    )
 
     # Models
     EMBEDDING_MODEL: str = Field(default="BAAI/bge-small-en-v1.5")
     RERANKER_MODEL: str = Field(default="BAAI/bge-reranker-base")
+    EMBEDDING_DEVICE: str = Field(default="cpu")
+    RERANKER_DEVICE: str = Field(default="cpu")
+    EMBEDDING_BATCH_SIZE: int = Field(default=4, gt=0)
+    RERANKER_BATCH_SIZE: int = Field(default=4, gt=0)
 
 
 settings = Settings()

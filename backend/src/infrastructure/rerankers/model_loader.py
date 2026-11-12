@@ -1,4 +1,3 @@
-import os
 from typing import ClassVar, Self
 
 import structlog
@@ -22,12 +21,13 @@ class RerankerModelLoader:
         if self._model is None:
             logger.info(f"Loading reranker model: {settings.RERANKER_MODEL}")
 
-            device = os.environ.get("RERANKER_DEVICE", "cpu")
+            device = settings.RERANKER_DEVICE
             self._model = CrossEncoder(settings.RERANKER_MODEL, device=device)
             logger.info(
                 "reranker_device",
                 requested_device=device,
                 actual_device=str(self._model.device),
+                batch_size=settings.RERANKER_BATCH_SIZE,
             )
 
             logger.info("Reranker model loaded successfully.")
