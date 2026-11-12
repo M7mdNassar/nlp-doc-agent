@@ -33,3 +33,6 @@ data/
 **/test-results
 **/playwright-report
 **/*.tsbuildinfo
+
+# Private, opt-in question captures must not enter image build contexts.
+.diagnostics/

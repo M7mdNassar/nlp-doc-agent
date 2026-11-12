@@ -247,3 +247,6 @@ data/
 .idea/
 .vscode/
 *.swp
+
+# Explicit question diagnostics contain document text and model replies.
+.diagnostics/
