@@ -27,6 +27,28 @@ export const toolSchema = z.object({
   output: z.record(z.string(), z.unknown()),
   chunk_ids: z.array(z.string()),
 });
+export const agentSchema = z.enum([
+  "retriever",
+  "analyst",
+  "answer",
+  "verification",
+]);
+export const progressSchema = z.object({
+  id: z.string(),
+  agent: agentSchema,
+  label: z.string(),
+  kind: z.enum(["agent", "tool"]),
+  status: z.enum(["running", "completed", "failed"]),
+  tool: z.string().nullable(),
+});
+export const toolUsageSchema = z.object({
+  name: z.string(),
+  label: z.string(),
+  agent: agentSchema,
+  calls: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+});
 export const answerSchema = z.object({
   answer: z.string(),
   state: z.enum(["answer_ready", "insufficient_evidence"]),
@@ -35,7 +57,24 @@ export const answerSchema = z.object({
   sources: z.array(sourceSchema),
   tool_results: z.array(toolSchema),
   conversation_id: z.string(),
+  activity: z.array(progressSchema).optional(),
+  tools_used: z.array(toolUsageSchema).optional(),
 });
+export const chatEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("progress"), step: progressSchema }),
+  z.object({ type: z.literal("result"), result: answerSchema }),
+  z.object({
+    type: z.literal("error"),
+    error: z.object({
+      status: z.number().int().min(400).max(599),
+      code: z.string(),
+      message: z.string(),
+      details: z
+        .object({ retry_after_seconds: z.number().nullable().optional() })
+        .optional(),
+    }),
+  }),
+]);
 export const healthSchema = z.object({
   status: z.string(),
   dependencies: z.record(z.string(), z.string()),
@@ -65,6 +104,8 @@ export type DocumentItem = z.infer<typeof documentSchema>;
 export type Job = z.infer<typeof jobSchema>;
 export type Source = z.infer<typeof sourceSchema>;
 export type Answer = z.infer<typeof answerSchema>;
+export type ProgressStep = z.infer<typeof progressSchema>;
+export type ToolUsage = z.infer<typeof toolUsageSchema>;
 export type Message = z.infer<typeof messageSchema>;
 export type Conversation = z.infer<typeof conversationSchema>;
 export type Health = z.infer<typeof healthSchema>;

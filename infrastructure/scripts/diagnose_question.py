@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 from src.core.observability import current_trace, question_scope, stage
+from src.core.retrieval_diagnostics import retrieval_events
 from src.domain.entities.document import DocumentStatus
 from src.domain.entities.evidence import EvidencePackage
 from src.domain.ports.llm import LLMClient
@@ -41,7 +42,7 @@ class Capture:
         descriptor = os.open(output, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
         self.file = os.fdopen(descriptor, "w+", encoding="utf-8")
         self.data: dict[str, Any] = {
-            "format_version": 1,
+            "format_version": 2,
             "created_at": datetime.now(UTC).isoformat(),
             "contains_document_content": True,
             "question": question,
@@ -49,7 +50,9 @@ class Capture:
             "llm_calls": [],
             "retrievals": [],
             "answer_attempts": [],
+            "retrieval_events": [],
         }
+        self.retrieval_token = retrieval_events.set(self.data["retrieval_events"])
         self.flush()
 
     def flush(self) -> None:
@@ -68,6 +71,7 @@ class Capture:
             self.flush()
         finally:
             self.file.close()
+            retrieval_events.reset(self.retrieval_token)
 
 
 class RecordingLLM:
@@ -109,6 +113,7 @@ class RecordingRetriever:
         self.inner, self.capture = inner, capture
 
     async def retrieve(self, query: str, filters: dict[str, Any] | None = None) -> EvidencePackage:
+        self.capture.data["retrieval_events"].append({"stage": "query", "query": query})
         evidence = await self.inner.retrieve(query, filters)
         self.capture.data["retrievals"].append(
             {

@@ -74,7 +74,12 @@ async def test_cooldown_is_per_model_and_primary_is_retried_after_expiry(monkeyp
         clock[0] += 15
         await llm.generate("q", "s", TokenBudget(100))
     assert [c.kwargs["model"] for c in create.await_args_list] == [
-        MODELS[0], MODELS[1], MODELS[2], MODELS[2], MODELS[1], MODELS[0]
+        MODELS[0],
+        MODELS[1],
+        MODELS[2],
+        MODELS[2],
+        MODELS[1],
+        MODELS[0],
     ]
     assert trace.summary()["llm_calls"] == 4
     assert trace.summary()["provider_requests"] == 6
@@ -82,6 +87,7 @@ async def test_cooldown_is_per_model_and_primary_is_retried_after_expiry(monkeyp
 
 
 async def test_all_models_limited_return_earliest_known_reset_without_retry_storm(monkeypatch):
+    monkeypatch.setattr(router.settings, "LLM_FALLBACK_MAX_WAIT_SECONDS", 0)
     llm, create, sleep = setup_router(
         monkeypatch, [rate_error("90"), rate_error("20"), rate_error(None), rate_error("40")]
     )
@@ -95,6 +101,70 @@ async def test_all_models_limited_return_earliest_known_reset_without_retry_stor
             create.side_effect = [rate_error(None)]
     assert create.await_count == 5
     sleep.assert_not_awaited()
+
+
+async def test_all_models_limited_resume_same_call_after_earliest_reset(monkeypatch):
+    from src.core.progress import progress_scope
+
+    llm, create, sleep = setup_router(
+        monkeypatch,
+        [rate_error("90"), rate_error("5"), rate_error("30"), rate_error("40"), completion()],
+    )
+    clock = [100.0]
+    monkeypatch.setattr(groq_adapter, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    sleep.side_effect = lambda delay: clock.__setitem__(0, clock[0] + delay)
+    with question_scope() as trace, progress_scope() as progress, stage("answer_verification"):
+        assert await llm.generate("draft", "review", TokenBudget(100)) == "ok"
+    sleep.assert_awaited_once_with(5)
+    assert create.await_args.kwargs["model"] == MODELS[1]
+    assert trace.summary()["llm_calls"] == 1
+    assert trace.waits[0]["planned_seconds"] == 5
+    waiting = next(s for s in progress.steps if s["label"] == "Waiting for provider capacity")
+    assert waiting["agent"] == "verification" and waiting["status"] == "completed"
+
+
+async def test_fallback_wait_budget_is_shared_across_question_stages(monkeypatch):
+    llm, create, sleep = setup_router(
+        monkeypatch, [rate_error("40")] * 4 + [completion()] + [rate_error("30")] * 4
+    )
+    clock = [100.0]
+    monkeypatch.setattr(groq_adapter, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    sleep.side_effect = lambda delay: clock.__setitem__(0, clock[0] + delay)
+    with question_scope():
+        assert await llm.generate("q", "s", TokenBudget(100)) == "ok"
+        with pytest.raises(LLMRateLimitError):
+            await llm.generate("review", "s", TokenBudget(100))
+    sleep.assert_awaited_once_with(40)
+    assert create.await_count == 9
+
+
+async def test_fresh_reset_hint_takes_priority_over_cached_smaller_prompt_limit(monkeypatch):
+    llm, create, sleep = setup_router(monkeypatch, [rate_error("15"), rate_error("30"),
+                                                 rate_error("40"), completion()])
+    clock = [100.0]
+    monkeypatch.setattr(groq_adapter, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    llm.providers[0]._rate_limit_until = 102.0
+    sleep.side_effect = lambda delay: clock.__setitem__(0, clock[0] + delay)
+    assert await llm.generate("larger prompt", "s", TokenBudget(100)) == "ok"
+    sleep.assert_awaited_once_with(15)
+    assert create.await_count == 4
+
+
+async def test_repeated_limits_stop_after_one_wait_and_cancellation_propagates(monkeypatch):
+    import asyncio
+
+    llm, create, sleep = setup_router(monkeypatch, [rate_error("2")] * 8)
+    clock = [100.0]
+    monkeypatch.setattr(groq_adapter, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    sleep.side_effect = lambda delay: clock.__setitem__(0, clock[0] + delay)
+    with pytest.raises(LLMRateLimitError):
+        await llm.generate("q", "s", TokenBudget(100))
+    sleep.assert_awaited_once_with(2)
+    assert create.await_count == 8
+    sleep.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await llm.generate("q", "s", TokenBudget(100))
+    assert create.await_count == 8
 
 
 async def test_unknown_resets_remain_unknown(monkeypatch):

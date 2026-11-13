@@ -57,7 +57,7 @@ class IngestionPipeline:
             for chunk in chunks:
                 chunk.document_name = doc.name
                 chunk.file_type = doc.file_type
-            texts = [c.text for c in chunks]
+            texts = [c.retrieval_text() for c in chunks]
             dense_vectors = await self.embedder.embed_documents(texts)
             sparse_embeddings = list(self.sparse_model.embed(texts))
             sparse_vectors = [

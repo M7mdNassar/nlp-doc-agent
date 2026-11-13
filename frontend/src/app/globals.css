@@ -1543,6 +1543,200 @@ strong {
   padding: 12px;
   line-height: 1.6;
 }
+.processing-card {
+  margin: 0 0 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  background: var(--panel);
+}
+.processing-card .waiting {
+  margin-bottom: 15px;
+  padding: 0;
+}
+.agent-stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.agent-stages li {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 12px 3px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: var(--soft);
+}
+.agent-stages strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+.agent-stages small {
+  font-size: 10px;
+}
+.agent-stage-icon {
+  display: flex;
+}
+.agent-stages [data-status="running"] {
+  border-color: var(--green);
+  color: var(--green);
+  background: var(--green-soft);
+}
+.agent-stages [data-status="completed"] {
+  color: var(--green);
+}
+.agent-stages [data-status="failed"] {
+  color: var(--danger);
+}
+.agent-arrow {
+  position: absolute;
+  right: -14px;
+  top: 50%;
+  color: var(--muted);
+}
+.agent-current {
+  margin: 13px 0 0;
+  font-size: 12px;
+  color: var(--ink);
+}
+.activity-spinner {
+  animation: activity-spin 1.2s linear infinite;
+}
+@keyframes activity-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.activity-history {
+  margin-top: 14px;
+  font-size: 11px;
+}
+.activity-history summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+}
+.activity-history summary span {
+  margin-left: auto;
+  font-size: 10px;
+}
+.activity-history ol {
+  list-style: none;
+  padding: 4px 0 0;
+  margin: 0;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.activity-history li {
+  display: flex;
+  gap: 9px;
+  padding: 10px 0;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+.activity-history li > svg {
+  flex-shrink: 0;
+  color: var(--green);
+}
+.activity-history li[data-status="failed"] > svg {
+  color: var(--danger);
+}
+.activity-history li span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.activity-history li strong {
+  font-weight: 500;
+  color: var(--ink);
+}
+.activity-history li small {
+  margin-left: auto;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.tools-used {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.tools-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.tools-heading > span {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--soft);
+  color: var(--muted);
+  font-size: 10px;
+}
+.tools-used > ul {
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.tools-used > ul > li {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+.tool-used-icon {
+  display: flex;
+  color: var(--green);
+}
+.tools-used li > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.tools-used li strong {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.tools-used li small {
+  font-size: 10px;
+  color: var(--muted);
+}
+.tool-outcome {
+  margin-left: auto;
+  color: var(--green);
+  font-size: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  white-space: nowrap;
+}
+.tool-outcome.has-failure {
+  color: var(--danger);
+}
+.tools-used > p {
+  font-size: 12px;
+  color: var(--muted);
+}
+.tools-used pre {
+  overflow-wrap: anywhere;
+}
 .library-view {
   padding: 47px 45px 30px;
   overflow: auto;

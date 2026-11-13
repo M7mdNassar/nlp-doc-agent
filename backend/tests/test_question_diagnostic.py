@@ -36,7 +36,6 @@ async def test_capture_keeps_exact_review_evidence_and_feedback_without_extra_ca
     monkeypatch,
 ):
     replies = [
-        "Model X accuracy?",
         '{"tools":[]}',
         json.dumps(
             {
@@ -83,8 +82,8 @@ async def test_capture_keeps_exact_review_evidence_and_feedback_without_extra_ca
     data = json.loads(output.read_text(encoding="utf-8"))
     assert data["result"]["state"] == "answer_ready"
     assert data["question_id"] == trace.question_id
-    assert data["usage"]["llm_calls"] == create.await_count == 7
-    assert data["usage"]["total_tokens"] == 875
+    assert data["usage"]["llm_calls"] == create.await_count == 6
+    assert data["usage"]["total_tokens"] == 750
     assert len(data["retrievals"]) == 1
     assert data["retrievals"][0]["chunks"][0]["id"] == "chunk_1"
     assert data["retrievals"][0]["chunks"][0]["text"] == sample_chunks[0].text

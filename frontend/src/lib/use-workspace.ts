@@ -8,6 +8,7 @@ import {
   Health,
   Job,
   Message,
+  ProgressStep,
   STORAGE_KEY,
   makeConversation,
   savedSchema,
@@ -32,6 +33,7 @@ export function useWorkspace() {
   const [pending, setPending] = useState<{
     conversationId: string;
     startedAt: number;
+    steps: ProgressStep[];
   } | null>(null);
   const [busyDocument, setBusyDocument] = useState<string | null>(null);
   const [jobPollError, setJobPollError] = useState(false);
@@ -325,13 +327,29 @@ export function useWorkspace() {
       title: c.messages.length ? c.title : text.slice(0, 65),
       updatedAt: Date.now(),
     }));
-    setPending({ conversationId: target.id, startedAt: Date.now() });
+    setPending({ conversationId: target.id, startedAt: Date.now(), steps: [] });
     try {
       const answer = await api.chat(
         text,
         target.backendId,
         target.docIds,
         abort.signal,
+        (step) => {
+          if (abort.signal.aborted || controller.current !== abort) return;
+          setPending((current) => {
+            if (!current || current.conversationId !== target.id)
+              return current;
+            const existing = current.steps.some((item) => item.id === step.id);
+            return {
+              ...current,
+              steps: existing
+                ? current.steps.map((item) =>
+                    item.id === step.id ? step : item,
+                  )
+                : [...current.steps, step],
+            };
+          });
+        },
       );
       const reply: Message = {
         id: crypto.randomUUID(),

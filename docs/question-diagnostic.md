@@ -43,6 +43,7 @@ The capture has these sections:
 | Section | Contents |
 |---|---|
 | `retrievals` | Search queries, filters, returned chunks, original page numbers and document IDs. |
+| `retrieval_events` | Complete hybrid-search and reranker candidate lists with scores, followed by context selection decisions. Exclusions identify duplicate text, document limits, chunk limits, or token budget. Available in format version 2 captures. |
 | `answer_attempts` | Each draft, exact selected evidence, analysis, feedback received for correction, reviewer verdict/feedback, and acceptance. |
 | `llm_calls` | Exact system/user prompts and returned text, including the reviewer's source-text mapping; associated provider-request metadata. |
 | `usage` | Actual reported tokens, waits, calls and stage durations under one question ID. |

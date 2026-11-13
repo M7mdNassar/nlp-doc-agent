@@ -1,9 +1,12 @@
 import { z } from "zod";
 import {
   answerSchema,
+  chatEventSchema,
   documentListSchema,
   healthSchema,
   jobSchema,
+  type Answer,
+  type ProgressStep,
 } from "./models";
 
 export class ApiError extends Error {
@@ -24,6 +27,13 @@ async function request<T>(
     ...init,
     cache: "no-store",
   });
+  return parseResponse(response, schema);
+}
+
+async function parseResponse<T>(
+  response: Response,
+  schema: z.ZodType<T>,
+): Promise<T> {
   let data;
   try {
     data = await response.json();
@@ -73,6 +83,74 @@ async function request<T>(
     );
   return parsed.data;
 }
+
+export async function readChatStream(
+  response: Response,
+  onProgress: (step: ProgressStep) => void,
+): Promise<Answer> {
+  if (
+    !response.ok ||
+    !response.headers.get("content-type")?.includes("text/event-stream")
+  )
+    return parseResponse(response, answerSchema);
+  if (!response.body)
+    throw new ApiError("The response stream was empty. Please try again.", 502);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value, { stream: !done });
+      buffer = buffer.replaceAll("\r\n", "\n");
+      if (buffer.length > 2_000_000)
+        throw new ApiError("The response stream was too large.", 502);
+      let boundary;
+      while ((boundary = buffer.indexOf("\n\n")) >= 0) {
+        const frame = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const data = frame
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trimStart())
+          .join("\n");
+        if (!data) continue;
+        let raw: unknown;
+        try {
+          raw = JSON.parse(data);
+        } catch {
+          throw new ApiError(
+            "The response stream was unreadable. Please try again.",
+            502,
+          );
+        }
+        const event = chatEventSchema.safeParse(raw);
+        if (!event.success)
+          throw new ApiError(
+            "The response stream was invalid. Please try again.",
+            502,
+          );
+        if (event.data.type === "progress") onProgress(event.data.step);
+        else if (event.data.type === "result") return event.data.result;
+        else
+          return parseResponse(
+            Response.json(event.data.error, {
+              status: event.data.error.status,
+            }),
+            answerSchema,
+          );
+      }
+      if (done)
+        throw new ApiError(
+          "The connection ended before the answer was ready. Please try again.",
+          502,
+        );
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+    reader.releaseLock();
+  }
+}
 export const api = {
   documents: (signal?: AbortSignal) =>
     request("documents", documentListSchema, { signal }),
@@ -93,22 +171,29 @@ export const api = {
       z.object({ status: z.string() }),
       { method: "DELETE" },
     ),
-  chat: (
+  chat: async (
     message: string,
     conversationId: string | undefined,
     docIds: string[] | null,
     signal: AbortSignal,
-  ) =>
-    request("chat", answerSchema, {
+    onProgress: (step: ProgressStep) => void,
+  ) => {
+    const response = await fetch("/api/backend/chat/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      cache: "no-store",
       signal,
       body: JSON.stringify({
         message,
         ...(conversationId ? { conversation_id: conversationId } : {}),
         ...(docIds !== null ? { filters: { doc_ids: docIds } } : {}),
       }),
-    }),
+    });
+    return readChatStream(response, onProgress);
+  },
 };
 export function errorText(error: unknown) {
   return error instanceof Error

@@ -152,7 +152,9 @@ async def test_correcting_verdict_reuses_executed_tool_results(sample_chunks):
         result = await AnalystAgent(llm).analyze("q", EvidencePackage(chunks=sample_chunks))
     spy.assert_called_once()
     assert result.tool_results[0].output["result"] == "0.95"
-    assert '"result": "0.95"' in llm.generate.await_args.args[0]
+    tool_json = llm.generate.await_args.args[0].split("Executed tool results:\n", 1)[1]
+    tool_json = tool_json.split("\nYour previous response", 1)[0]
+    assert json.loads(tool_json)[0]["output"]["result"] == "0.95"
 
 
 @pytest.mark.parametrize(

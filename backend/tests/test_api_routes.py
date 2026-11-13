@@ -1,3 +1,4 @@
+import asyncio
 import json
 from contextlib import asynccontextmanager, suppress
 from io import BytesIO
@@ -69,6 +70,90 @@ async def test_chat_dependency_and_response(api, client):
     assert response.json()["usage"]["provider_requests"] == 0
     assert current_trace() is None
     uc.execute.assert_awaited_once_with("Question?", None, None)
+
+
+async def test_stream_route_preserves_question_scope_and_completed_result(api, client):
+    app, providers = api
+
+    async def execute(*args):
+        with stage("retrieval"), stage("vector_search"):
+            pass
+        return {
+            "answer": "Verified",
+            "state": "answer_ready",
+            "loops": 0,
+            "evidence_count": 1,
+            "sources": [],
+            "tool_results": [],
+            "conversation_id": "c1",
+        }
+
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: SimpleNamespace(
+        execute=execute
+    )
+    response = await client.post("/chat/stream", json={"message": "Question?"})
+    assert response.headers["content-type"].startswith("text/event-stream")
+    frames = [
+        json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")
+    ]
+    assert frames[0]["type"] == "progress"
+    answer = frames[-1]["result"]
+    assert answer["question_id"] == response.headers["x-question-id"]
+    assert answer["tools_used"][0]["name"] == "hybrid_search"
+    assert answer["usage"]["stages"][0]["stage"] == "vector_search"
+    assert current_trace() is None
+
+
+async def test_stream_disconnect_stops_execution_before_dependency_cleanup(api):
+    app, providers = api
+    disconnected, cancelled = asyncio.Event(), asyncio.Event()
+    cleanup = []
+
+    async def execute(*args):
+        try:
+            with stage("retrieval"):
+                await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def dependency():
+        yield SimpleNamespace(execute=execute)
+        cleanup.append(cancelled.is_set())
+
+    app.dependency_overrides[providers.get_ask_question_uc] = dependency
+    received = False
+
+    async def receive():
+        nonlocal received
+        if not received:
+            received = True
+            return {"type": "http.request", "body": b'{"message":"Question?"}', "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.body" and b'"type": "progress"' in message.get(
+            "body", b""
+        ):
+            disconnected.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/chat/stream",
+        "raw_path": b"/chat/stream",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json")],
+        "server": ("test", 80),
+        "client": ("test", 123),
+    }
+    await asyncio.wait_for(app(scope, receive, send), 2)
+    assert cancelled.is_set()
+    assert cleanup == [True]
 
 
 async def test_document_upload_uses_multipart_and_injected_use_case(api, client):

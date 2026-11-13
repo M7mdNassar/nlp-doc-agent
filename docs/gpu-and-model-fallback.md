@@ -108,6 +108,44 @@ environment variables so Docker recreates containers with the new values.
 
 ## Fallback behavior
 
+### OpenRouter after Groq limits
+
+OpenRouter is an optional second provider. Set both values in the root `.env`:
+
+```dotenv
+OPENROUTER_API_KEY=your-key
+OPENROUTER_FALLBACK_MODELS=["openrouter/free"]
+```
+
+Keep the key out of source control. This deployment uses free models only.
+`openrouter/free` selects an available free model; availability and model choice
+can change. See [OpenRouter's free router](https://openrouter.ai/docs/guides/routing/routers/free-router).
+Specific model IDs can be supplied as an ordered JSON list instead. A missing
+key or `[]` disables this provider. Recreate the backend and worker after changing
+environment variables.
+
+Each call tries the Groq primary and configured Groq fallback models first.
+Only rate limits or known cooldowns advance the chain. When every Groq model is
+limited, OpenRouter is tried immediately, before waiting. Groq authentication,
+configuration and invalid-output failures do not trigger provider switching.
+The same source, citation, structured-output and independent review checks apply
+to OpenRouter responses. A partially emitted raw token stream is never replayed.
+
+OpenRouter rate limits participate in the existing bounded cooldown policy.
+Invalid credentials, insufficient credits and unavailable model configuration
+produce safe provider-configuration errors. Account/provider errors and document
+text are not copied into normal logs. Request traces record `provider=openrouter`,
+the actual selected model when reported, token usage and completion status.
+
+Validation on 2026-11-13 included a live JSON smoke test and a complete public
+`attention.pdf` question with Groq cooldowns simulated only in an isolated process.
+Both used the configured OpenRouter key and `openrouter/free`. The document
+question returned `answer_ready`, with independent review accepted on its first
+attempt. Captures live in the ignored `.diagnostics/openrouter-live-smoke.log`
+and `.diagnostics/openrouter-e2e.json` files. No paid model was configured.
+
+### Groq model order and cooldowns
+
 The requested default order is:
 
 1. `openai/gpt-oss-120b`
@@ -120,11 +158,17 @@ skips any model whose known cooldown is still active, and immediately tries the
 next on HTTP 429. Cooldowns are independent and retained by the cached router
 within the backend process. They are not shared between backend replicas.
 When a cooldown expires, the higher-priority model is eligible again. Each model
-is tried at most once per logical call for rate limiting; there is no wait between
-fallback models. Transient errors keep the existing bounded retry behavior.
+is tried once before any cooldown wait; there is no wait between fallback models.
+Transient errors keep the existing bounded retry behavior.
 
-If every configured model is limited, the API returns HTTP 429 with the earliest
-known retry delay. Missing reset times remain unknown. A restart clears local
+If every configured model is limited, normal document generation permits one
+cooldown wait and one retry pass for the current call. Fresh provider hints take
+priority over cached cooldowns from earlier prompts. The total planned wait across
+a question is capped by `LLM_FALLBACK_MAX_WAIT_SECONDS` (default 60; set 0 to disable).
+Unknown resets, delays above the remaining budget, and a second exhausted pass
+produce a rate-limit error. Answer verification remains mandatory. The chat activity
+shows **Waiting for provider capacity** during the wait. Raw token streaming keeps
+its immediate exhaustion behavior. Missing reset times remain unknown. A restart clears local
 cooldown memory but does not reset provider quota. Authentication/configuration
 errors, invalid output and verification failures do not trigger model fallback.
 Streaming only falls back before any answer text has been emitted.

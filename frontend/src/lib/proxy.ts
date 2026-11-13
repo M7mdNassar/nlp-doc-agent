@@ -2,7 +2,7 @@ const MAX_BODY_BYTES = 51 * 1024 * 1024; // 50 MiB file plus multipart overhead.
 const id = "[a-zA-Z0-9_-]+";
 const routes: Record<string, RegExp> = {
   GET: new RegExp(`^(health|documents|jobs/${id})$`),
-  POST: new RegExp(`^(chat|documents|documents/${id}/reindex)$`),
+  POST: new RegExp(`^(chat(?:/stream)?|documents|documents/${id}/reindex)$`),
   DELETE: new RegExp(`^documents/${id}$`),
 };
 
@@ -72,11 +72,17 @@ export async function proxyRequest(request: Request, segments: string[]) {
     const backend = (
       process.env.BACKEND_URL || "http://127.0.0.1:8000"
     ).replace(/\/$/, "");
-    const headers = new Headers({ Accept: "application/json" });
+    const streaming = path === "chat/stream";
+    const headers = new Headers({
+      Accept: streaming ? "text/event-stream" : "application/json",
+    });
     const contentType = request.headers.get("content-type");
     if (contentType) headers.set("Content-Type", contentType);
-    const timeout =
-      path === "chat" ? 600_000 : request.method === "GET" ? 15_000 : 120_000;
+    const timeout = path.startsWith("chat")
+      ? 600_000
+      : request.method === "GET"
+        ? 15_000
+        : 120_000;
     const upstream = await fetch(`${backend}/${path}`, {
       method: request.method,
       headers,
@@ -90,7 +96,8 @@ export async function proxyRequest(request: Request, segments: string[]) {
       headers: {
         "Content-Type":
           upstream.headers.get("content-type") || "application/json",
-        "Cache-Control": "no-store",
+        "Cache-Control": "no-store, no-transform",
+        ...(streaming ? { "X-Accel-Buffering": "no" } : {}),
         ...(upstream.headers.has("retry-after")
           ? { "Retry-After": upstream.headers.get("retry-after")! }
           : {}),

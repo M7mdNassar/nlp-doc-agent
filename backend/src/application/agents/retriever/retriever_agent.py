@@ -9,8 +9,6 @@ from src.domain.ports.reranker import Reranker
 from src.domain.ports.vector_store import VectorStore
 from src.domain.value_objects.sparse_vector import SparseVector
 
-from .context_selector import ContextSelector
-
 
 class RetrieverAgent:
     def __init__(self, embedder: Embedder, vector_store: VectorStore, reranker: Reranker):
@@ -18,7 +16,6 @@ class RetrieverAgent:
         self.vector_store = vector_store
         self.reranker = reranker
         self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
-        self.selector = ContextSelector(embedder.count_tokens)
 
     async def retrieve(self, query: str, filters: dict[str, Any] | None = None) -> EvidencePackage:
         # 1. Embed Query (Dense)
@@ -45,10 +42,8 @@ class RetrieverAgent:
         if evidence.is_empty:
             return evidence
 
-        # 4. Rerank (Top 20 -> Top 8)
+        # Keep the full ranking until the orchestrator applies the shared context budget.
         with stage("reranking", candidate_chunks=len(evidence.chunks)):
             reranked_chunks = await self.reranker.rerank(query, evidence.chunks, top_k=20)
 
-        return EvidencePackage.from_chunks(
-            self.selector.select(reranked_chunks), evidence.diagnostics
-        )
+        return EvidencePackage.from_chunks(reranked_chunks, evidence.diagnostics)
