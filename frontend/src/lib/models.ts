@@ -57,6 +57,14 @@ export const answerSchema = z.object({
   sources: z.array(sourceSchema),
   tool_results: z.array(toolSchema),
   conversation_id: z.string(),
+  cache: z
+    .object({
+      status: z.enum(["miss", "exact_hit", "semantic_hit", "bypass"]),
+      age_seconds: z.number().nonnegative().optional(),
+      similarity: z.number().nullable().optional(),
+      reason: z.string().optional(),
+    })
+    .optional(),
   activity: z.array(progressSchema).optional(),
   tools_used: z.array(toolUsageSchema).optional(),
 });

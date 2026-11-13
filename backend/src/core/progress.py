@@ -7,6 +7,10 @@ from contextvars import ContextVar
 from src.domain.entities.progress import AgentName, ProgressStep, ToolUsage
 
 STAGES: dict[str, tuple[AgentName, str, str | None]] = {
+    "cache_lookup": ("retriever", "Checking saved verified answers", "answer_cache"),
+    "cache_wait": ("answer", "Waiting for an identical question to finish", None),
+    "cache_reuse": ("answer", "Reusing a verified answer", None),
+    "cached_source_validation": ("verification", "Checking cached source quotes", "citation_validator"),
     "query_rewrite": ("retriever", "Understanding the question", None),
     "retrieval": ("retriever", "Finding relevant passages", None),
     "vector_search": ("retriever", "Hybrid document search", "hybrid_search"),

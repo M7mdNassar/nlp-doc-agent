@@ -58,6 +58,7 @@ class Source(TypedDict):
 
 
 class ChatResult(TypedDict):
+    cache: NotRequired[dict[str, Any]]
     activity: NotRequired[list[ProgressStep]]
     tools_used: NotRequired[list[ToolUsage]]
     question_id: NotRequired[str]
