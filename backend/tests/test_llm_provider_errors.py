@@ -101,7 +101,8 @@ async def test_transient_connection_errors_keep_one_bounded_retry_layer(monkeypa
 @pytest.mark.parametrize("stream", [False, True])
 async def test_router_preserves_provider_error_metadata(monkeypatch, stream):
     adapter, create, sleep = adapter_with(monkeypatch, [rate_error("879")])
-    monkeypatch.setattr(router, "GroqAdapter", lambda: adapter)
+    monkeypatch.setattr(router.settings, "LLM_FALLBACK_MODELS", [])
+    monkeypatch.setattr(router, "GroqAdapter", lambda **kwargs: adapter)
     llm = router.LLMRouter()
     with pytest.raises(LLMRateLimitError) as error:
         if stream:

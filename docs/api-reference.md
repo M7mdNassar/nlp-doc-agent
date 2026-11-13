@@ -116,6 +116,15 @@ For example, a rate-limited chat can return:
 }
 ```
 
-These failures do not save a fabricated insufficient-evidence answer to conversation history. A provider wait hint is not a guarantee that all remaining LLM calls for an answer will fit the quota. Genuine missing evidence and failed grounding checks still return the normal `insufficient_evidence` result.
+These failures do not save a fabricated insufficient-evidence answer to conversation history. A provider wait hint is not a guarantee that all remaining LLM calls for an answer will fit the quota. Genuine missing evidence and exhausted answer-verification attempts still return the normal `insufficient_evidence` result.
+
+Malformed or ungrounded analysis output receives at most one correction per analysis
+pass, shared between tool planning and the evidence verdict. The correction uses the
+same evidence; a verdict correction reuses already executed tool results. If validation
+still fails, `/chat` returns HTTP 503 `ANALYSIS_OUTPUT_INVALID` instead of retrieving
+again or claiming the documents lack evidence. Its `details` include `analysis_stage`,
+`correction_attempts`, `question_id`, and the accumulated `usage`. No failed turn is
+saved. The frontend displays the service-error message with its existing retry action.
+Provider errors and unexpected application errors keep their existing error handling.
 
 Do not interpret health=ok as proof that a particular document, model, provider key, or answer is correct. Poll jobs and inspect their errors.

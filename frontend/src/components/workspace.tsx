@@ -41,6 +41,7 @@ import {
 import { useWorkspace, type WorkspaceState } from "@/lib/use-workspace";
 import { type DocumentItem, type Source, sourceLocation } from "@/lib/models";
 import { AnswerMessage } from "./answer";
+import { AgentFlow } from "./agent-activity";
 import { Brand, FileBadge, Modal, StatusBadge } from "./ui";
 
 const suggestions = [
@@ -69,9 +70,11 @@ const suggestions = [
 function Waiting({
   startedAt,
   cancel,
+  steps,
 }: {
   startedAt: number;
   cancel: () => void;
+  steps: NonNullable<WorkspaceState["pending"]>["steps"];
 }) {
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
@@ -82,33 +85,38 @@ function Waiting({
     return () => clearInterval(timer);
   }, [startedAt]);
   return (
-    <div className="waiting" role="status">
-      <Brand small />
-      <div>
-        <strong>
-          Making sense of your sources
-          <span className="thinking-dots">
-            <i />
-            <i />
-            <i />
-          </span>
-        </strong>
-        <p>
-          {seconds < 25
-            ? "Your answer will appear after the evidence checks finish."
-            : "Still working. Detailed questions and provider limits can take a little longer."}
-        </p>
+    <section className="processing-card" aria-label="Processing your question">
+      <div className="waiting">
+        <Brand small />
+        <div>
+          <strong>
+            Working with your sources
+            <span className="thinking-dots">
+              <i />
+              <i />
+              <i />
+            </span>
+          </strong>
+          <p>
+            {seconds < 25
+              ? "Your answer will appear after the evidence checks finish."
+              : "Still working. Detailed questions and provider limits can take a little longer."}
+          </p>
+        </div>
+        <span className="elapsed" aria-hidden="true">
+          {seconds}s
+        </span>
+        <button
+          className="icon-button"
+          aria-label="Stop waiting for answer"
+          title="Stop waiting for this answer"
+          onClick={cancel}
+        >
+          <Square size={14} />
+        </button>
       </div>
-      <span className="elapsed">{seconds}s</span>
-      <button
-        className="icon-button"
-        aria-label="Stop waiting for answer"
-        title="Stop waiting for this answer"
-        onClick={cancel}
-      >
-        <Square size={14} />
-      </button>
-    </div>
+      <AgentFlow steps={steps} />
+    </section>
   );
 }
 
@@ -662,6 +670,7 @@ export function Workspace() {
                     <Waiting
                       startedAt={workspace.pending.startedAt}
                       cancel={workspace.cancel}
+                      steps={workspace.pending.steps}
                     />
                   )}
                   <div ref={bottom} />

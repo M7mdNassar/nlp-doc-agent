@@ -8,6 +8,44 @@ test("proxy rejects arbitrary backend paths", async () => {
   );
   expect(response.status).toBe(404);
 });
+
+test("chat proxy forwards stream chunks before completion", async () => {
+  const originalFetch = globalThis.fetch;
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  globalThis.fetch = async (_url, init) => {
+    expect(new Headers(init?.headers).get("accept")).toBe("text/event-stream");
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        start(value) {
+          controller = value;
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  };
+  try {
+    const response = await proxyRequest(
+      new Request("http://localhost:3000/api/backend/chat/stream", {
+        method: "POST",
+      }),
+      ["chat", "stream"],
+    );
+    expect(response.headers.get("x-accel-buffering")).toBe("no");
+    const reader = response.body!.getReader();
+    controller.enqueue(new TextEncoder().encode("data: progress\n\n"));
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+      "progress",
+    );
+    controller.enqueue(new TextEncoder().encode("data: result\n\n"));
+    controller.close();
+    expect(new TextDecoder().decode((await reader.read()).value)).toContain(
+      "result",
+    );
+    expect((await reader.read()).done).toBe(true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 test("proxy rejects cross-origin mutations before contacting the backend", async () => {
   const response = await proxyRequest(
     new Request("http://localhost:3000/api/backend/documents", {

@@ -38,6 +38,10 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Local documentation and logs
+/docs/
+/logs/
+
 # Unit test / coverage reports
 htmlcov/
 .tox/
@@ -59,7 +63,7 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
+#*.log
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -247,3 +251,6 @@ data/
 .idea/
 .vscode/
 *.swp
+
+# Explicit question diagnostics contain document text and model replies.
+.diagnostics/

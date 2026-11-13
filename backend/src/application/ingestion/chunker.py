@@ -56,9 +56,7 @@ class Chunker:
             if end == start:
                 raise ValueError("Chunk budget cannot fit one character")
             if end < len(text):
-                boundary = text.rfind(" ", start + (end - start) // 2, end)
-                if boundary > start:
-                    end = boundary
+                end = self._end_boundary(text, start, end)
             segment = text[start:end].strip()
             if segment:
                 result.append(segment)
@@ -70,5 +68,16 @@ class Chunker:
                 and self.count_tokens(text[next_start - 1 : end]) <= self.overlap
             ):
                 next_start -= 1
+            # Begin overlap at a word boundary, while retaining the token limit.
+            while next_start < end and not text[next_start - 1].isspace():
+                next_start += 1
             start = next_start
         return result
+
+    @staticmethod
+    def _end_boundary(text: str, start: int, end: int) -> int:
+        for separator in ("\n\n", ". ", "\n", " "):
+            boundary = text.rfind(separator, start + (end - start) // 2, end)
+            if boundary > start:
+                return boundary + len(separator)
+        return end

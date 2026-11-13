@@ -3,18 +3,11 @@
 import { useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import {
-  ArrowUpRight,
-  Calculator,
-  Check,
-  ChevronDown,
-  Copy,
-  FileSearch,
-  RotateCcw,
-} from "lucide-react";
+import { ArrowUpRight, Check, Copy, FileSearch, RotateCcw } from "lucide-react";
 import type { Answer, Message, Source } from "@/lib/models";
 import { sourceLocation } from "@/lib/models";
 import { Brand, FileBadge } from "./ui";
+import { ActivityHistory, ToolsUsed } from "./agent-activity";
 
 function label(text: string) {
   return text.replace(/[\[\]\r\n]/g, " ").trim();
@@ -167,27 +160,9 @@ export function AnswerMessage({
                 </div>
               </div>
             )}
-            {!!answer?.tool_results.length && (
-              <details className="tool-details">
-                <summary>
-                  <Calculator size={14} />{" "}
-                  {answer.tool_results.length === 1
-                    ? "Analysis details"
-                    : `${answer.tool_results.length} analysis steps`}
-                  <ChevronDown size={14} />
-                </summary>
-                {answer.tool_results.map((tool, index) => (
-                  <div key={index}>
-                    <strong>{tool.name.replaceAll("_", " ")}</strong>
-                    {tool.output.result !== undefined && (
-                      <p>
-                        Result: <b>{String(tool.output.result)}</b>
-                      </p>
-                    )}
-                    <pre>{JSON.stringify(tool.output, null, 2)}</pre>
-                  </div>
-                ))}
-              </details>
+            {answer && <ToolsUsed answer={answer} />}
+            {!!answer?.activity?.length && (
+              <ActivityHistory steps={answer.activity} />
             )}
             <div className="answer-actions">
               <button

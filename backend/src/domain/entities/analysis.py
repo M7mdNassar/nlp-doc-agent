@@ -17,9 +17,16 @@ class AnalysisPlan(StrictModel):
     tools: list[ToolRequest] = Field(default_factory=list, max_length=6)
 
 
+class FindingQuote(StrictModel):
+    chunk_id: str
+    quote: str = Field(min_length=1, max_length=3000)
+
+
 class Finding(StrictModel):
     text: str = Field(min_length=1, max_length=3000)
-    chunk_ids: list[str] = Field(min_length=1, max_length=12)
+    chunk_ids: list[str] = Field(default_factory=list, max_length=12)
+    quotes: list[FindingQuote] = Field(default_factory=list, max_length=12)
+    quote_ids: list[str] = Field(default_factory=list, max_length=12)
 
 
 class AnalysisVerdict(StrictModel):
@@ -27,6 +34,10 @@ class AnalysisVerdict(StrictModel):
     missing_info: str
     conflict_detected: bool = False
     findings: list[Finding] = Field(default_factory=list, max_length=12)
+
+
+class AnalysisDecision(AnalysisPlan):
+    verdict: AnalysisVerdict | None = None
 
 
 @dataclass

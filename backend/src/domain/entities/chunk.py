@@ -21,6 +21,12 @@ class Chunk:
     location: str | None = None
     table_data: dict[str, Any] | None = None
 
+    def retrieval_text(self) -> str:
+        """Include the source heading for ranking without altering citation text."""
+        if self.section and not self.text.startswith(self.section):
+            return f"{self.section}\n{self.text}"
+        return self.text
+
     def metadata(self) -> dict[str, Any]:
         return {
             key: getattr(self, key)

@@ -4,9 +4,10 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from src.domain.entities.analysis import StrictModel, ToolRequest, ToolResult
+from src.domain.entities.answer import EvidenceReference
 from src.domain.entities.chunk import Chunk
 from src.domain.entities.evidence import EvidencePackage
 
@@ -30,7 +31,14 @@ class CalculatorArguments(StrictModel):
 
 
 class TableArguments(StrictModel):
-    chunk_id: str
+    chunk_id: str | None = None
+    quote_id: str | None = None
+
+    @model_validator(mode="after")
+    def one_reference(self) -> "TableArguments":
+        if (self.chunk_id is None) == (self.quote_id is None):
+            raise ValueError("Select exactly one table chunk_id or quote_id")
+        return self
 
 
 class ComparisonItem(StrictModel):
@@ -79,8 +87,11 @@ def checked_number(value: str) -> Decimal:
 
 
 class AnalystTools:
-    def __init__(self, evidence: EvidencePackage):
+    def __init__(
+        self, evidence: EvidencePackage, references: dict[str, EvidenceReference] | None = None
+    ):
         self.chunks = {str(chunk.id): chunk for chunk in evidence.chunks}
+        self.references = references or {}
 
     def _chunk(self, chunk_id: str) -> Chunk:
         if chunk_id not in self.chunks:
@@ -110,10 +121,17 @@ class AnalystTools:
             return self._calculate(CalculatorArguments.model_validate(request.arguments))
         if request.name == "table_extractor":
             args = TableArguments.model_validate(request.arguments)
-            chunk = self._chunk(args.chunk_id)
+            chunk_id = args.chunk_id
+            if args.quote_id is not None:
+                reference = self.references.get(args.quote_id)
+                if reference is None:
+                    raise ValueError("Unknown table quote_id")
+                chunk_id = reference.chunk_id
+            assert chunk_id is not None  # TableArguments requires exactly one reference.
+            chunk = self._chunk(chunk_id)
             if not chunk.table_data:
                 raise ValueError("The selected chunk is not a structured table")
-            return ToolResult("table_extractor", chunk.table_data, [args.chunk_id])
+            return ToolResult("table_extractor", chunk.table_data, [chunk_id])
         if request.name == "document_comparison":
             return self._compare(ComparisonArguments.model_validate(request.arguments))
         return self._analyze(DataArguments.model_validate(request.arguments))

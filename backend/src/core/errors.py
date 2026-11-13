@@ -46,3 +46,16 @@ class UnauthorizedError(AppError):
 class InsufficientEvidenceError(AppError):
     def __init__(self, message: str = "Not enough evidence to answer the question."):
         super().__init__("INSUFFICIENT_EVIDENCE", message, 422)
+
+
+class AnalysisOutputError(AppError):
+    """Analysis could not be validated; this says nothing about document sufficiency."""
+
+    def __init__(self, analysis_stage: str):
+        super().__init__(
+            "ANALYSIS_OUTPUT_INVALID",
+            "The model could not produce a valid document analysis after one correction "
+            "attempt. Please try again. Your documents are still available.",
+            503,
+            {"analysis_stage": analysis_stage, "correction_attempts": 1},
+        )

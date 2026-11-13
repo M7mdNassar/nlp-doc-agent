@@ -12,7 +12,11 @@ class QuestionMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http" or scope["path"] != "/chat" or scope["method"] != "POST":
+        if (
+            scope["type"] != "http"
+            or scope["path"] not in {"/chat", "/chat/stream"}
+            or scope["method"] != "POST"
+        ):
             await self.app(scope, receive, send)
             return
         with question_scope() as trace:

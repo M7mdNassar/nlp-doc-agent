@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
-import type { Answer, DocumentItem } from "../src/lib/models";
+import type { Answer, DocumentItem, ProgressStep } from "../src/lib/models";
 
 const source = {
   chunk_id: "chunk_report",
@@ -50,7 +50,7 @@ async function mockApi(page: Page, initial: DocumentItem[] = documents) {
       });
     if (path === "documents" && method === "GET")
       return route.fulfill({ json: { items } });
-    if (path === "chat") {
+    if (path === "chat" || path === "chat/stream") {
       chats.push(route.request().postDataJSON());
       if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
       return route
@@ -112,6 +112,188 @@ async function mockApi(page: Page, initial: DocumentItem[] = documents) {
     },
   };
 }
+
+test("agent flow follows live events, repeats retrieval, and saves tools after completion", async ({
+  page,
+}, testInfo) => {
+  await mockApi(page);
+  await page.addInitScript(() => {
+    const original = window.fetch;
+    window.fetch = async (input, init) => {
+      if (!String(input).endsWith("/api/backend/chat/stream"))
+        return original(input, init);
+      let receive: EventListener;
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          receive = (event) => {
+            const data = (event as CustomEvent).detail;
+            controller.enqueue(
+              new TextEncoder().encode(`data: ${JSON.stringify(data)}\n\n`),
+            );
+            if (data.type === "result" || data.type === "error") {
+              window.removeEventListener("test-agent-event", receive);
+              controller.close();
+            }
+          };
+          window.addEventListener("test-agent-event", receive);
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              window.removeEventListener("test-agent-event", receive);
+              controller.error(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+          );
+        },
+        cancel() {
+          window.removeEventListener("test-agent-event", receive);
+        },
+      });
+      return new Response(body, {
+        headers: { "content-type": "text/event-stream" },
+      });
+    };
+  });
+  await page.goto("/");
+  await page
+    .getByRole("textbox", { name: "Ask a question about your documents" })
+    .fill("Compare the reported results.");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await expect(
+    page.getByRole("region", { name: "Processing your question" }),
+  ).toBeVisible();
+  const activity: ProgressStep[] = [];
+  async function step(value: ProgressStep) {
+    const index = activity.findIndex((item) => item.id === value.id);
+    if (index >= 0) activity[index] = value;
+    else activity.push(value);
+    await page.evaluate(
+      (detail) =>
+        window.dispatchEvent(new CustomEvent("test-agent-event", { detail })),
+      { type: "progress", step: value },
+    );
+  }
+  const retrieval: ProgressStep = {
+    id: "step_1",
+    agent: "retriever",
+    label: "Finding relevant passages",
+    kind: "agent",
+    status: "running",
+    tool: null,
+  };
+  await step(retrieval);
+  await expect(
+    page.locator('.agent-stages [aria-current="step"]'),
+  ).toContainText("Retriever");
+  await expect(page.locator(".prose")).toHaveCount(0);
+  await page.screenshot({
+    path: testInfo.outputPath("agent-flow-desktop.png"),
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".agent-stages")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("agent-flow-mobile.png") });
+  const accessibility = await new AxeBuilder({ page })
+    .include(".processing-card")
+    .analyze();
+  expect(accessibility.violations).toEqual([]);
+  await step({ ...retrieval, status: "completed" });
+  const analysis: ProgressStep = {
+    id: "step_2",
+    agent: "analyst",
+    label: "Assessing the evidence",
+    kind: "agent",
+    status: "running",
+    tool: null,
+  };
+  await step(analysis);
+  const calculator: ProgressStep = {
+    id: "step_3",
+    agent: "analyst",
+    label: "Calculator",
+    kind: "tool",
+    status: "running",
+    tool: "calculator",
+  };
+  await step(calculator);
+  await expect(page.locator(".agent-current")).toHaveText("Calculator");
+  await step({ ...calculator, status: "completed" });
+  await step({ ...analysis, status: "completed" });
+  await step({ ...retrieval, id: "step_4" });
+  await expect(
+    page.locator('.agent-stages [aria-current="step"]'),
+  ).toContainText("Retriever");
+  await step({ ...retrieval, id: "step_4", status: "completed" });
+  await step({
+    id: "step_5",
+    agent: "answer",
+    label: "Writing the answer",
+    kind: "agent",
+    status: "completed",
+    tool: null,
+  });
+  const review: ProgressStep = {
+    id: "step_6",
+    agent: "verification",
+    label: "Reviewing answer grounding",
+    kind: "agent",
+    status: "running",
+    tool: null,
+  };
+  await step(review);
+  await expect(
+    page.locator('.agent-stages [aria-current="step"]'),
+  ).toContainText("Verification");
+  await expect(page.locator(".prose")).toHaveCount(0);
+  await step({ ...review, status: "completed" });
+  const completed: Answer = {
+    ...answer,
+    activity,
+    tools_used: [
+      {
+        name: "calculator",
+        label: "Calculator",
+        agent: "analyst",
+        calls: 1,
+        completed: 1,
+        failed: 0,
+      },
+    ],
+    tool_results: [
+      {
+        name: "calculator",
+        output: { result: 4 },
+        chunk_ids: [source.chunk_id],
+      },
+    ],
+  };
+  await page.evaluate(
+    (detail) =>
+      window.dispatchEvent(new CustomEvent("test-agent-event", { detail })),
+    { type: "result", result: completed },
+  );
+  await expect(page.locator(".processing-card")).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Tools used" })).toContainText(
+    "Calculator",
+  );
+  await page.getByText("View analysis results", { exact: true }).click();
+  await expect(page.locator(".tool-details")).toContainText("Result: 4");
+  await page.screenshot({ path: testInfo.outputPath("tools-used-mobile.png") });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.screenshot({
+    path: testInfo.outputPath("tools-used-desktop.png"),
+  });
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Tools used" })).toContainText(
+    "Calculator",
+  );
+  await page.getByText("Agent activity", { exact: false }).click();
+  await expect(page.locator(".activity-history li")).toHaveCount(6);
+});
 
 test("empty workspace uploads, polls processing, and makes the source available", async ({
   page,
@@ -464,6 +646,18 @@ test("library, answer, source drawer, and source picker remain accessible", asyn
   ]);
   await page.goto("/");
   async function check() {
+    // Measure the settled layout instead of a transient fade-in frame.
+    await page.evaluate(async () => {
+      await Promise.all(
+        document
+          .getAnimations()
+          .filter(
+            (animation) =>
+              animation.effect?.getTiming().iterations !== Infinity,
+          )
+          .map((animation) => animation.finished.catch(() => {})),
+      );
+    });
     const result = await new AxeBuilder({ page })
       .withTags(["wcag2a", "wcag2aa", "wcag21aa"])
       .analyze();

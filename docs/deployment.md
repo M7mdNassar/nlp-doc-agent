@@ -2,6 +2,36 @@
 
 Run commands from the repository root unless stated otherwise. The backend upgrade sections below retain the API-only commands; the frontend can be added independently.
 
+## Update analysis validation and bounded correction
+
+After copying/pulling the updated backend code, rebuild only the backend. Existing
+documents, vectors, conversation data, environment settings and model selection stay
+in place. No migration, dependency change, reindex, worker or frontend rebuild is needed.
+
+CPU installation:
+
+```powershell
+docker compose -f docker-compose.yml up -d --build --no-deps backend
+```
+
+GPU test laptop (preserve the GPU override):
+
+```powershell
+$env:RERANKER_DEVICE = "cuda"
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build --no-deps backend
+```
+
+Wait for startup/model loading, then check `http://localhost:8000/health`. Ask the same
+question in a new conversation with only the intended document selected. Export logs:
+
+```powershell
+docker compose -f docker-compose.yml logs --no-color --since=15m backend | Set-Content analysis-chat.log
+```
+
+See [observability](observability.md#analysis-validation-and-correction) for the safe
+validation diagnostics and correction events. An exhausted correction now returns a
+clear service error instead of spending additional retrieval rounds on invalid output.
+
 ## Add the Folio frontend to an existing backend
 
 ```sh
@@ -175,11 +205,19 @@ answer-quality verification still run, and genuine quota exhaustion still return
 No frontend/worker rebuild, dependency update, environment change, migration, reindex, or
 volume reset is required. Wait for backend startup/model warmup before retrying in Folio.
 
+### GPU inference and ordered Groq fallback
+
+See [GPU and model fallback](gpu-and-model-fallback.md) for the new configuration,
+commands, CUDA verification, 4 GB memory limits, and fallback behavior. The GPU
+override now moves dense embeddings in backend/worker and backend reranking to
+CUDA. Both containers need rebuilding. No migration or reindex is required for
+these device/router changes.
+
 ### Existing image configuration
 
 - Production backend and worker install uv sync --frozen --no-dev --extra ml --no-cache.
 - Development stages install all extras with the frozen lockfile and --no-cache.
-- Linux and Windows use CPU-only PyTorch from the official PyTorch CPU index. The refreshed lockfile excludes CUDA/NVIDIA dependencies; no GPU is required. macOS retains its PyPI source.
+- Base Linux and Windows installs use CPU-only PyTorch from the official PyTorch CPU index. No GPU is required for base Compose. The optional `docker-compose.gpu.yml` installs CUDA PyTorch through the existing GPU Dockerfile for backend and worker. macOS retains its PyPI source.
 - Disabling uv's download cache during image builds avoids retaining package archives in the image layers. Docker layer caching still works normally.
 - The migrate service runs alembic upgrade head and gates API/worker startup.
 - .env.example documents the existing required settings and optional LLM_MODEL/MAX_UPLOAD_BYTES.

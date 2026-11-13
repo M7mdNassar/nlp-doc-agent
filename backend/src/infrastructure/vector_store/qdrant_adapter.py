@@ -5,6 +5,7 @@ import structlog
 from qdrant_client import AsyncQdrantClient, models
 
 from src.core.config import settings
+from src.core.retrieval_diagnostics import record_candidates
 from src.domain.entities.chunk import Chunk
 from src.domain.entities.evidence import EvidencePackage
 from src.domain.ports.vector_store import VectorStore
@@ -145,6 +146,7 @@ class QdrantAdapter(VectorStore):
                 )
             )
 
+        record_candidates("hybrid_search", chunks, [float(p.score) for p in response.points])
         return EvidencePackage.from_chunks(chunks, diagnostics={"raw_results": str(len(chunks))})
 
     @staticmethod

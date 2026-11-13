@@ -279,7 +279,11 @@ async def test_analyst_executes_tools_and_passes_results_to_verdict():
                         "has_enough_evidence": True,
                         "missing_info": "",
                         "findings": [
-                            {"text": "Average accuracy is 93.5%.", "chunk_ids": [str(chunk.id)]}
+                            {
+                                "text": "Average accuracy is 93.5%.",
+                                "chunk_ids": [str(chunk.id)],
+                                "quotes": [{"chunk_id": str(chunk.id), "quote": chunk.text}],
+                            }
                         ],
                     }
                 ),
@@ -309,6 +313,10 @@ async def test_analyst_shared_text_preserves_multiple_source_identities():
                             {
                                 "text": "Both report 92%.",
                                 "chunk_ids": [str(first.id), str(second.id)],
+                                "quotes": [
+                                    {"chunk_id": str(first.id), "quote": first.text},
+                                    {"chunk_id": str(second.id), "quote": second.text},
+                                ],
                             }
                         ],
                     }
@@ -325,21 +333,25 @@ async def test_analyst_shared_text_preserves_multiple_source_identities():
         str(second.document_id),
     }
     for item in payload["evidence"]:
-        assert payload["texts"][item["text_id"]] == first.text
+        assert payload["texts"][item["excerpts"][0]["text_id"]] == first.text
 
 
 @pytest.mark.parametrize("bad", ['"false"', '"true"', "1", "null"])
 async def test_analyst_rejects_non_boolean_verdicts(bad):
+    from src.core.errors import AnalysisOutputError
+
     llm = SimpleNamespace(
         generate=AsyncMock(
             side_effect=[
                 '{"tools":[]}',
                 '{"has_enough_evidence":' + bad + ',"missing_info":"missing"}',
+                '{"has_enough_evidence":' + bad + ',"missing_info":"missing"}',
             ]
         )
     )
-    result = await AnalystAgent(llm).analyze("q", EvidencePackage(chunks=[passage(92)]))
-    assert result.has_enough_evidence is False
+    with pytest.raises(AnalysisOutputError):
+        await AnalystAgent(llm).analyze("q", EvidencePackage(chunks=[passage(92)]))
+    assert llm.generate.await_count == 3
 
 
 async def test_chat_uses_saved_history_filters_and_persists_new_turn():

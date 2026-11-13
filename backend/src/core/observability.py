@@ -11,6 +11,8 @@ from typing import Any, cast
 
 import structlog
 
+from src.core.progress import current_progress
+
 logger = structlog.get_logger(__name__)
 
 
@@ -107,6 +109,8 @@ def stage(name: str, **metrics: Any) -> Iterator[dict[str, Any]]:
     started = time.perf_counter()
     token = _stage.set(name)
     status = "ok"
+    progress = current_progress()
+    step = progress.start(name, metrics.get("tool_name")) if progress else None
     with structlog.contextvars.bound_contextvars(stage=name):
         logger.info("stage_started", **metrics)
         try:
@@ -116,6 +120,9 @@ def stage(name: str, **metrics: Any) -> Iterator[dict[str, Any]]:
             metrics["error_type"] = type(exc).__name__
             raise
         finally:
+            if progress and step:
+                step["status"] = "completed" if status == "ok" else "failed"
+                progress.publish(step)
             record = {
                 **metrics,
                 "stage": name,
@@ -179,9 +186,18 @@ def retry_wait(seconds: float, reason: str) -> Iterator[None]:
     started = time.perf_counter()
     metrics = {"stage": _stage.get(), "reason": reason, "planned_seconds": seconds}
     logger.info("llm_retry_wait_started", **metrics)
+    progress = current_progress()
+    step = progress.start(_stage.get(), waiting=True) if progress else None
+    status = "completed"
     try:
         yield
+    except BaseException:
+        status = "failed"
+        raise
     finally:
+        if progress and step:
+            step["status"] = "failed" if status == "failed" else "completed"
+            progress.publish(step)
         metrics["duration_ms"] = round((time.perf_counter() - started) * 1000, 2)
         trace = current_trace()
         if trace:

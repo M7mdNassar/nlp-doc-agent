@@ -86,6 +86,38 @@ or historical usage endpoint. Docker log retention applies; export needed logs
 before recreating containers. They describe this application's calls, not all
 usage by other applications sharing the Groq organization.
 
+## Analysis validation and correction
+
+`analysis_output_invalid` records the question ID, `analysis_stage`, `analysis_attempt`,
+and `correction_remaining`. Diagnostics distinguish:
+
+- `category=json`: invalid JSON.
+- `category=schema`: invalid fields/types, with up to eight `issues` containing a safe
+  field path and validation type, e.g. `has_enough_evidence` / `bool_type`.
+- `category=grounding`: `unknown_chunk_reference` or `missing_grounded_findings`.
+- `category=tool_validation`: deterministic tool arguments or evidence checks failed.
+
+Unknown field names and dynamic dictionary keys are redacted; exception messages,
+input values, invalid completions, questions and document text are not logged.
+Stage records include `output_valid` and `correction`. A stage with `status=ok` and
+`output_valid=false` means the validation failure was caught for bounded recovery,
+not that the output was accepted.
+
+`analysis_correction_requested` starts a single correction using the same evidence.
+`analysis_output_corrected` records successful correction. The budget is one correction
+shared across planning/tool execution and verdict validation per analysis pass, so
+there are at most three logical analysis calls instead of the usual two. Correcting
+a verdict does not repeat successful tool planning or deterministic execution.
+Corrections are separate logical calls, included in token totals under the original
+question ID; provider transport retries retain their existing separate bounds.
+
+`analysis_correction_exhausted` ends the question with HTTP 503
+`ANALYSIS_OUTPUT_INVALID`. Invalid analysis is never a retrieval query. Only a
+validated insufficient-evidence verdict (or no retrieved evidence) requests more
+evidence. A successful correction must still pass the normal citation and answer
+verification checks. This can reduce wasted work, but does not eliminate rate limits
+or guarantee that the model's next output is valid.
+
 ## Source sharing and duplicate files
 
 Uploading identical bytes again, even under another filename, returns HTTP 409

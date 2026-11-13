@@ -19,9 +19,16 @@ class EmbeddingModelLoader:
 
     def load(self) -> SentenceTransformer:
         if self._model is None:
-            logger.info(f"Loading embedding model: {settings.EMBEDDING_MODEL}")
-            self._model = SentenceTransformer(settings.EMBEDDING_MODEL)
-            logger.info("Embedding model loaded successfully.")
+            self._model = SentenceTransformer(
+                settings.EMBEDDING_MODEL, device=settings.EMBEDDING_DEVICE
+            )
+            logger.info(
+                "embedding_device",
+                model=settings.EMBEDDING_MODEL,
+                requested_device=settings.EMBEDDING_DEVICE,
+                actual_device=str(self._model.device),
+                batch_size=settings.EMBEDDING_BATCH_SIZE,
+            )
         return self._model
 
 

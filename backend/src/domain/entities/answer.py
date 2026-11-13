@@ -3,6 +3,7 @@ from typing import Any, NotRequired, TypedDict
 from pydantic import Field
 
 from .analysis import StrictModel
+from .progress import ProgressStep, ToolUsage
 
 
 class EvidenceReference(StrictModel):
@@ -37,9 +38,10 @@ class GroundingVerdict(StrictModel):
     qualifications_preserved: list[bool] = Field(min_length=1, max_length=12)
     no_added_details: list[bool] = Field(min_length=1, max_length=12)
     feedback: list[str] = Field(default_factory=list, max_length=12)
+    missing_info: str = Field(default="", max_length=1000)
 
     def accepts(self, block_count: int) -> bool:
-        return all(
+        return not self.missing_info and all(
             len(checks) == block_count and all(checks)
             for checks in (self.supported, self.qualifications_preserved, self.no_added_details)
         )
@@ -56,6 +58,8 @@ class Source(TypedDict):
 
 
 class ChatResult(TypedDict):
+    activity: NotRequired[list[ProgressStep]]
+    tools_used: NotRequired[list[ToolUsage]]
     question_id: NotRequired[str]
     usage: NotRequired[dict[str, Any]]
     answer: str

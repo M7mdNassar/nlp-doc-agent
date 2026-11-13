@@ -116,7 +116,7 @@ def _build_ask_question_uc(session: AsyncSession) -> AskQuestionUseCase:
         answer,
         verifier,
         ContextSelector(
-            get_embedder().count_tokens, max_tokens=6000, max_chunks=16, per_document=8
+            get_embedder().count_tokens, max_tokens=6000, max_chunks=16, per_document=12
         ),
     )
 
