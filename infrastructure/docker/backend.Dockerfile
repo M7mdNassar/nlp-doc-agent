@@ -20,7 +20,7 @@ WORKDIR /app
 # -----------------
 FROM base AS development
 COPY backend/pyproject.toml backend/uv.lock* /app/
-RUN uv sync --all-extras
+RUN uv sync --frozen --all-extras --no-cache
 COPY backend/ /app/
 
 # -----------------
@@ -28,7 +28,7 @@ COPY backend/ /app/
 # -----------------
 FROM base AS production
 COPY backend/pyproject.toml backend/uv.lock* /app/
-RUN uv sync --no-dev
+RUN uv sync --frozen --no-dev --extra ml --no-cache
 COPY backend/ /app/
 
 # Create data dirs

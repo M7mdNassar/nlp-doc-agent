@@ -23,7 +23,15 @@ async def upload_document(
     content = await file.read()
     file_type = filename.split(".")[-1] if "." in filename else "txt"
     doc, job = await uc.execute(filename, file_type, content)
-    return {"document_id": str(doc.id), "job_id": job.job_id, "status": "queued"}
+    return {"document_id": str(doc.id), "job_id": job.job_id, "status": job.status.value}
+
+
+@router.post("/{doc_id}/reindex")
+async def reindex_document(
+    doc_id: str, uc: Annotated[UploadDocumentUseCase, Depends(get_upload_doc_uc)]
+) -> dict[str, str]:
+    doc, job = await uc.reindex(DocumentId(doc_id))
+    return {"document_id": str(doc.id), "job_id": job.job_id, "status": job.status.value}
 
 
 @router.get("")

@@ -57,7 +57,13 @@ required-environments = [
 ]
 
 [tool.uv.sources]
-# Can be used later if we host our own packages
+# Docker runs on CPU; avoid downloading CUDA libraries on Linux.
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [build-system]
 requires = ["hatchling"]

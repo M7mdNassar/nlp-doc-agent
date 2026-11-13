@@ -1,6 +1,8 @@
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.errors import DuplicateDocumentError
 from src.domain.entities.document import Document, DocumentStatus
 from src.domain.ports.document_repository import DocumentRepository as IDocumentRepository
 from src.domain.value_objects.document_id import DocumentId
@@ -39,30 +41,17 @@ class DocumentRepository(IDocumentRepository):
             )
             self.session.add(model)
 
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            await self.session.rollback()
+            existing = await self.get_by_checksum(document.checksum)
+            if existing is not None and existing.id != document.id:
+                raise DuplicateDocumentError(str(existing.id), existing.name) from None
+            raise
 
     async def get(self, doc_id: DocumentId) -> Document | None:
         stmt = select(DocumentModel).where(DocumentModel.id == str(doc_id))
-        result = await self.session.execute(stmt)
-        model = result.scalar_one_or_none()
-
-        if not model:
-            return None
-
-        return Document(
-            id=DocumentId(model.id),
-            name=model.name,
-            file_type=model.file_type,
-            checksum=model.checksum,
-            status=DocumentStatus(model.status),
-            page_count=model.page_count,
-            error_message=model.error_message,
-            access_tags=model.access_tags.split(",") if model.access_tags else [],
-            created_at=model.created_at,
-        )
-
-    async def get_by_checksum(self, checksum: str) -> Document | None:
-        stmt = select(DocumentModel).where(DocumentModel.checksum == checksum)
         result = await self.session.execute(stmt)
         model = result.scalar_one_or_none()
 
@@ -99,6 +88,13 @@ class DocumentRepository(IDocumentRepository):
             )
             for m in models
         ]
+
+    async def get_by_checksum(self, checksum: str) -> Document | None:
+        result = await self.session.execute(
+            select(DocumentModel.id).where(DocumentModel.checksum == checksum)
+        )
+        doc_id = result.scalar_one_or_none()
+        return await self.get(DocumentId(doc_id)) if doc_id else None
 
     async def delete(self, doc_id: DocumentId) -> None:
         stmt = select(DocumentModel).where(DocumentModel.id == str(doc_id))

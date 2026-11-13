@@ -10,9 +10,9 @@ class ParserFactory:
     def __init__(self) -> None:
         self.parsers: list[DocumentParser] = [
             PDFParser(),
+            DOCXParser(),
             TXTParser(),
             MarkdownParser(),
-            DOCXParser(),
         ]
 
     def get_parser(self, file_type: str) -> DocumentParser:

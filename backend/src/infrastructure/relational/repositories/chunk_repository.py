@@ -21,6 +21,7 @@ class ChunkRepository(IChunkRepository):
                 page=c.page,
                 section=c.section,
                 parent_id=c.parent_id,
+                metadata_json=c.metadata(),
             )
             for c in chunks
         ]
@@ -38,6 +39,7 @@ class ChunkRepository(IChunkRepository):
                 page=m.page,
                 section=m.section,
                 parent_id=m.parent_id,
+                **m.metadata_json,
             )
             for m in result.scalars().all()
         ]

@@ -1,60 +1,32 @@
-# Reliability Invariants
+# Reliability and limits
 
-These invariants define the contract between the system and its users. They are enforced in code and must not be relaxed without a decision record.
+Implemented behavior:
 
-## Invariants
+- Three retrieval rounds maximum; at most six tools per Analyst pass.
+- Conversation history, selected context, accumulated evidence, and output lengths are bounded.
+- Provider quota/availability failures remain distinct from evidence verdicts through rewriting, analysis, answer generation, and review. Rate limits return HTTP 429 and the provider's wait hint when available; other provider service/configuration failures return 503. No failed provider turn is persisted as an evidence refusal.
+- Groq SDK retries are disabled to avoid nested retries. A single application retry layer handles transient errors up to three provider attempts. Local cooldown checks do not consume provider attempts: if a sleep wakes slightly early, the remaining cooldown is waited out before another request. All requested rate-limit sleeps, including local cooldown waits, share a 60-second total wait budget per LLM call. Long or unknown quota waits and configuration errors surface immediately. A valid `Retry-After` sets a cooldown in the running adapter so requests before that time do not call Groq. The cooldown is per backend process and resets on restart; restarting does not reset the external provider quota.
+- Missing evidence, malformed Analyst JSON, non-boolean verdicts, invalid tool inputs, and missing analytical findings prevent final answer generation.
+- The Answer Agent selects IDs for source excerpts; the backend copies their quotes verbatim rather than asking the model to reproduce source wording. Every structured answer block must cite known chunks and quotes that occur in those chunks. Malformed drafts or unknown excerpt IDs receive one correction attempt using the original evidence and validation feedback. Both attempts use the same strict validation; a separate LLM review still checks factual support before source formatting. Persistently invalid drafts return insufficient_evidence; deleting citation markers is not used to salvage unsupported prose.
+- Analyst findings and answers must preserve material qualifications of the claims they include, including simulation/validation settings, baselines, units, approximations and uncertainty. The final review separately checks factual support, qualification preservation and absence of added details; every check must pass for every block. A simulation-based evaluation does not by itself establish synthetic input data or the absence of real observations. These semantic checks remain model-based, not a formal guarantee.
+- A rejected quality review supplies feedback for up to two corrected answers using the same evidence. Corrections omit unverified Analyst findings and must pass citation and all quality checks; three rejected answers fail closed. This adds at most two answer/review cycles without increasing retrieval rounds.
+- Arithmetic and statistical tools run deterministic code over source-validated inputs. No generated Python/eval/shell is executed.
+- Matching checksums reject duplicate uploads with HTTP 409 and the existing document ID. The database's unique index resolves concurrent uploads, with cleanup of the losing request's file. Reindexing replaces document vectors/chunks and preserves the document ID.
+- Every chat request has an independent question ID, per-stage timings, actual provider usage and retry/wait diagnostics, including failures and rejected completions. Missing provider accounting remains explicitly unknown. See [observability](observability.md).
+- Identical source text is serialized once per prompt with references that retain document/citation identities. Verification keeps surrounding qualifications and per-block citation scope; differing source wording is not merged. Similar chunks are not discarded solely because most words overlap.
+- Worker job status is persisted as processing/completed/failed, including failures during model initialization and parsing. Exceptions propagate to Celery.
+- Migrations preserve existing document records; production Docker images include ML dependencies.
 
-1. **No unsupported answer.** Every answer either contains citations or explicitly states that evidence is insufficient.
-2. **No fabricated citation.** Every citation is resolved to a real chunk in the evidence package by the post-generation verifier. Unresolved citations are stripped or downgraded.
-3. **No LLM arithmetic.** All numerical computation goes through the Calculator tool. The LLM never performs arithmetic.
-4. **No LLM-enforced access control.** Metadata filters proposed by the LLM are validated server-side against the user’s document access. The retrieval layer enforces authorization, not the model.
-5. **Bounded autonomy.** Every question runs under hard limits on retrieval rounds (max 2 feedback loops), clarification turns (max 1), tool calls per turn, and total latency.
-6. **Bounded context.** Every LLM call has a pre-computed token budget. Requests exceeding the budget are truncated or rejected before they reach the provider.
-7. **Idempotent ingestion.** Re-uploading an identical document is a no-op. Concurrent ingestion of the same document is serialized by a per-document lock.
-8. **Atomic upserts.** Dense and sparse vectors for a chunk are written together. A partial write cannot occur.
-9. **Traceable.** Every request carries a `trace_id` propagated across all stages, log entries, and OTel spans.
-10. **Graceful degradation.** Every external dependency has a documented fallback and a visible state in the UI.
-11. **Cache correctness over hit rate.** The semantic cache uses a strict similarity threshold. False positives are worse than misses.
-12. **Reproducible builds.** Lockfiles are committed. Container images are pinned to specific versions.
-13. **Reversible ingestion.** Deleting a document cascades to chunks, vectors, and every cached answer that cited it.
+Limits:
 
-## Failure Handling
+- Grounding is partly model-based and can still make mistakes. Citation validity is not a formal proof of every claim.
+- This is a single-user local backend, not an authenticated multi-tenant service.
+- Image-only/scanned PDFs need OCR before upload. PDF table/headings recognition depends on document layout.
+- DOCX has no reliable rendered pagination; references use native block/section locations. TXT/Markdown use line ranges.
+- Very large tables may exceed the selected context budget; the system should report insufficient evidence rather than silently promise complete analysis.
+- SQLite and Qdrant replacement is not an atomic distributed transaction. Retry reindexing after a failed replacement.
+- Concurrent uploads are protected by the database unique-checksum constraint. Concurrent reindex requests are not protected by a distributed per-document lock.
+- Response caching, provider failover, SSE, automatic OCR, tracing guarantees, and per-user rate limits from the original design are not implemented.
+- Changing the embedding model to one with a different vector dimension requires a separately planned Qdrant migration; the current collection expects 384 dimensions.
 
-| Failure | Handling |
-|---|---|
-| Encrypted PDF | Rejected at validation, status `failed`, user notified |
-| Corrupted file | Quarantined, ingestion job moves to dead-letter, user notified |
-| Duplicate upload | Short-circuits via checksum, returns existing document ID |
-| Scanned PDF with low OCR confidence | OCR fallback runs, per-page confidence stored, Analyst warned |
-| Empty retrieval | Answer returns explicit “no evidence” with search diagnostics |
-| Conflicting evidence | Analyst flags conflict, Answer surfaces both sides with citations |
-| Feedback loop runaway | Hard cap at 2 rounds, then explicit insufficiency |
-| Groq rate limit | Fallback model, then fallback provider, then partial answer with notice |
-| Groq outage | Degraded mode: retrieval-only response with cached or partial evidence |
-| Qdrant unavailable | Retrieval fails closed, no hallucination; explicit error to user |
-| Redis unavailable | Degraded mode: no cache, ingestion pauses, health endpoint reports degraded |
-| Embedding model upgraded | Version mismatch triggers full re-embed job; old vectors marked stale |
-| Prompt injection in a document | Sanitized before LLM; Analyst system prompt explicitly ignores embedded instructions |
-| Invalid citation placeholder | Verifier strips or downgrades before response |
-| Ambiguous query | Max one clarification turn, then best-effort with explicit assumption |
-| Duplicate concurrent queries | Redis lock coalesces into a single computation |
-| Stale cache after document update | Citation-based invalidation evicts affected entries |
-| Interrupted ingestion | Worker task is idempotent and resumes from last completed step |
-
-## Degraded Modes
-
-The `/health` endpoint reports the state of each dependency. The UI shows a banner when the system is degraded. A degraded system is **still honest**: it does not pretend to be healthy by returning answers it cannot support.
-
-| Dependency | Degraded behavior |
-|---|---|
-| Groq | Serve cached answers only; reject new questions with a clear message |
-| Qdrant | Serve cached answers only; ingestion continues queueing |
-| Redis | No caching, no locks; ingestion paused; chat continues at reduced rate |
-| SQLite | System unavailable; fail loud |
-
-## Testing for Reliability
-
-- Unit tests cover every invariant that can be tested in isolation.
-- Integration tests cover adapter behavior against real Qdrant, Redis, and SQLite.
-- Contract tests enforce that every adapter honors its port.
-- A golden evaluation set is run in CI to catch regressions in retrieval recall and citation precision.
+Tests use real generated PDF/DOCX inputs, SQLite migrations/repositories, and in-memory Qdrant. Provider/model behavior is mocked in the default suite. The optional live smoke script exercises actual embeddings, reranking, Groq analysis/tools, citations, and a conversational follow-up using synthetic documents.

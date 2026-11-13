@@ -9,6 +9,7 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str = Field(default="", description="Groq API Key")
     CEREBRAS_API_KEY: str = Field(default="", description="Cerebras API Key")
     OPENROUTER_API_KEY: str = Field(default="", description="OpenRouter API Key")
+    OPENROUTER_FALLBACK_MODELS: list[str] = Field(default_factory=list)
 
     # Infrastructure
     QDRANT_URL: str = Field(default="http://qdrant:6333")
@@ -19,10 +20,32 @@ class Settings(BaseSettings):
     JWT_SECRET: str = Field(default="super_secret_jwt_key_change_in_production")
     LOG_LEVEL: str = Field(default="info")
     DATA_DIR: str = Field(default="/app/data")
+    MAX_UPLOAD_BYTES: int = Field(default=50 * 1024 * 1024, gt=0)
+    ANSWER_CACHE_ENABLED: bool = True
+    ANSWER_CACHE_SEMANTIC_ENABLED: bool = True
+    ANSWER_CACHE_TTL_SECONDS: int = Field(default=86400, ge=1)
+    ANSWER_CACHE_SIMILARITY_THRESHOLD: float = Field(default=.94, ge=.9, le=1)
+    ANSWER_CACHE_WAIT_SECONDS: float = Field(default=300, ge=0, le=600)
+    ANSWER_CACHE_VERSION: str = "1"
+    LLM_MODEL: str = Field(default="openai/gpt-oss-120b")
+    # Shared across stages of a question; fallback models are still tried immediately.
+    LLM_FALLBACK_MAX_WAIT_SECONDS: float = Field(default=60, ge=0, le=60)
+    # Ordered JSON array in .env. Set [] to disable fallback.
+    LLM_FALLBACK_MODELS: list[str] = Field(
+        default_factory=lambda: [
+            "openai/gpt-oss-20b",
+            "qwen/qwen3.8-27b",
+            "openai/gpt-oss-safeguard-20b",
+        ]
+    )
 
     # Models
     EMBEDDING_MODEL: str = Field(default="BAAI/bge-small-en-v1.5")
     RERANKER_MODEL: str = Field(default="BAAI/bge-reranker-base")
+    EMBEDDING_DEVICE: str = Field(default="cpu")
+    RERANKER_DEVICE: str = Field(default="cpu")
+    EMBEDDING_BATCH_SIZE: int = Field(default=4, gt=0)
+    RERANKER_BATCH_SIZE: int = Field(default=4, gt=0)
 
 
 settings = Settings()

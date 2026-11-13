@@ -1,4 +1,7 @@
+import hashlib
+import json
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends
@@ -7,18 +10,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.application.agents.analyst.analyst_agent import AnalystAgent
 from src.application.agents.answer.answer_agent import AnswerAgent
 from src.application.agents.orchestrator.orchestrator import Orchestrator
+from src.application.agents.retriever.context_selector import ContextSelector
 from src.application.agents.retriever.query_rewriter import QueryRewriter
 from src.application.agents.retriever.retriever_agent import RetrieverAgent
+from src.application.answer_cache import AnswerCache
 from src.application.citations.verifier import CitationVerifier
-from src.application.tools.calculator import Calculator
-from src.application.tools.document_comparison import DocumentComparison
-from src.application.tools.registry import ToolRegistry
 from src.application.use_cases.ask_question import AskQuestionUseCase
 from src.application.use_cases.delete_document import DeleteDocumentUseCase
 from src.application.use_cases.get_job_status import GetJobStatusUseCase
 from src.application.use_cases.list_documents import ListDocumentsUseCase
 from src.application.use_cases.upload_document import UploadDocumentUseCase
+from src.core.config import settings
+from src.core.observability import stage
+from src.domain.ports.answer_cache import AnswerCacheStore
 from src.infrastructure.relational.db import get_db_session
+from src.infrastructure.relational.repositories.conversation_repository import (
+    ConversationRepository,
+)
 from src.infrastructure.relational.repositories.document_repository import DocumentRepository
 from src.infrastructure.relational.repositories.job_repository import JobRepository
 
@@ -57,6 +65,41 @@ def get_vector_store() -> "QdrantAdapter":
     return QdrantAdapter()
 
 
+@lru_cache
+def get_answer_cache_store() -> AnswerCacheStore:
+    from src.infrastructure.cache.answer_store import RedisQdrantAnswerStore
+
+    return RedisQdrantAnswerStore()
+
+
+@lru_cache
+def answer_cache_parameters() -> str:
+    digest = hashlib.sha256()
+    # A changed backend invalidates saved approvals, including prompt/parser changes.
+    for path in sorted(Path(__file__).resolve().parents[2].rglob("*.py")):
+        digest.update(str(path.relative_to(Path(__file__).resolve().parents[2])).encode())
+        digest.update(path.read_bytes())
+    digest.update(
+        json.dumps(
+            {
+                key: getattr(settings, key)
+                for key in (
+                    "ANSWER_CACHE_VERSION",
+                    "LLM_MODEL",
+                    "LLM_FALLBACK_MODELS",
+                    "OPENROUTER_FALLBACK_MODELS",
+                    "EMBEDDING_MODEL",
+                    "RERANKER_MODEL",
+                )
+            },
+            sort_keys=True,
+        ).encode()
+    )
+    return digest.hexdigest()
+
+
+# --- Database Dependency ---
+
 DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 
 
@@ -77,19 +120,44 @@ def get_job_status_uc(session: DBSession) -> GetJobStatusUseCase:
 
 
 def get_ask_question_uc(session: DBSession) -> AskQuestionUseCase:
+    with stage("dependency_setup"):
+        return _build_ask_question_uc(session)
+
+
+def _build_ask_question_uc(session: AsyncSession) -> AskQuestionUseCase:
     rewriter = QueryRewriter(get_llm())
     retriever = RetrieverAgent(get_embedder(), get_vector_store(), get_reranker())
 
-    # Setup Tools
-    registry = ToolRegistry()
-    registry.register(Calculator())
-    registry.register(DocumentComparison())
-    # Table Extractor needs evidence, so it's registered dynamically in a real ReAct,
-    # but for our simplified tool loop, the Analyst prompt will handle context.
-
-    analyst = AnalystAgent(get_llm(), registry)
+    # AnalystTools executes validated requests against each question's evidence.
+    analyst = AnalystAgent(get_llm())
     answer = AnswerAgent(get_llm())
     verifier = CitationVerifier()
 
-    orchestrator = Orchestrator(rewriter, retriever, analyst, answer, verifier)
-    return AskQuestionUseCase(orchestrator)
+    orchestrator = Orchestrator(
+        rewriter,
+        retriever,
+        analyst,
+        answer,
+        verifier,
+        ContextSelector(
+            get_embedder().count_tokens, max_tokens=6000, max_chunks=16, per_document=12
+        ),
+    )
+
+    cache = None
+    if settings.ANSWER_CACHE_ENABLED:
+        from src.infrastructure.cache.corpus import SqlCacheCorpus
+
+        cache = AnswerCache(
+            get_answer_cache_store(),
+            SqlCacheCorpus(session),
+            get_embedder(),
+            answer_cache_parameters(),
+            ttl=settings.ANSWER_CACHE_TTL_SECONDS,
+            semantic=settings.ANSWER_CACHE_SEMANTIC_ENABLED,
+            threshold=settings.ANSWER_CACHE_SIMILARITY_THRESHOLD,
+            wait_seconds=settings.ANSWER_CACHE_WAIT_SECONDS,
+        )
+    return AskQuestionUseCase(
+        orchestrator, ConversationRepository(session), DocumentRepository(session), cache
+    )

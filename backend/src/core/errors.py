@@ -23,6 +23,16 @@ class ValidationError(AppError):
         super().__init__("VALIDATION_ERROR", message, 400, details)
 
 
+class DuplicateDocumentError(AppError):
+    def __init__(self, document_id: str, document_name: str):
+        super().__init__(
+            "DOCUMENT_ALREADY_EXISTS",
+            f'This file is already uploaded as "{document_name}". Use the existing document or reindex it.',
+            409,
+            {"document_id": document_id, "document_name": document_name},
+        )
+
+
 class NotFoundError(AppError):
     def __init__(self, resource: str, resource_id: str):
         super().__init__("NOT_FOUND", f"{resource} with ID {resource_id} not found.", 404)
@@ -36,3 +46,16 @@ class UnauthorizedError(AppError):
 class InsufficientEvidenceError(AppError):
     def __init__(self, message: str = "Not enough evidence to answer the question."):
         super().__init__("INSUFFICIENT_EVIDENCE", message, 422)
+
+
+class AnalysisOutputError(AppError):
+    """Analysis could not be validated; this says nothing about document sufficiency."""
+
+    def __init__(self, analysis_stage: str):
+        super().__init__(
+            "ANALYSIS_OUTPUT_INVALID",
+            "The model could not produce a valid document analysis after one correction "
+            "attempt. Please try again. Your documents are still available.",
+            503,
+            {"analysis_stage": analysis_stage, "correction_attempts": 1},
+        )

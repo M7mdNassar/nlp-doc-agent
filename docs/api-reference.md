@@ -1,230 +1,130 @@
-# API Reference
+# Backend API
 
-This document describes the local API for **NLP Doc Chat**, including authentication, error responses, endpoints, streaming behavior, and rate limits.
+Base URL: http://localhost:8000. Interactive documentation: /docs; live OpenAPI schema: /openapi.json.
 
-## Base URL
+The current API is a local single-user service without authentication. Chat returns a complete JSON response; there is no /chat/stream endpoint.
 
-```text
-http://localhost:8000
-```
+## Documents and jobs
 
-All endpoints use JSON for requests and responses unless stated otherwise. File uploads use `multipart/form-data`, and the streaming chat endpoint uses Server-Sent Events (SSE).
-
-The OpenAPI schema is generated at `docs/api/openapi.json`. It is the source of truth for the generated TypeScript client.
-
-## Table of Contents
-
-- [Authentication](#authentication)
-- [Error Contract](#error-contract)
-  - [Common Error Codes](#common-error-codes)
-- [Endpoints](#endpoints)
-  - [`GET /health`](#get-health)
-  - [`POST /documents`](#post-documents)
-  - [`GET /documents`](#get-documents)
-  - [`DELETE /documentsdocument_id`](#delete-documentsdocument_id)
-  - [`GET /jobsjob_id`](#get-jobsjob_id)
-  - [`POST /chat`](#post-chat)
-  - [`POST /chat/stream`](#post-chatstream)
-- [Rate Limits](#rate-limits)
-
----
-
-## Authentication
-
-Version 1 uses a **JWT stored in an HttpOnly cookie**.
-
-The frontend obtains the token through the login route and forwards it automatically with API requests. All API routes require a valid session except `GET /health`.
-
-## Error Contract
-
-All error responses use the same JSON structure:
-
-```json
-{
-  "code": "RETRIEVAL_UNAVAILABLE",
-  "message": "Human-readable description.",
-  "details": {
-    "dependency": "qdrant"
-  },
-  "trace_id": "01HX..."
-}
-```
-
-### Common Error Codes
-
-| Code | Meaning |
+| Endpoint | Behavior |
 |---|---|
-| `VALIDATION_ERROR` | The request body or parameters are invalid. |
-| `UNAUTHORIZED` | The session is missing or invalid. |
-| `FORBIDDEN` | Access to the requested document is denied. |
-| `NOT_FOUND` | The requested resource does not exist. |
-| `DOCUMENT_FAILED` | Document ingestion failed. See `details.reason` for the reason. |
-| `INSUFFICIENT_EVIDENCE` | The pipeline completed but could not find enough evidence to answer. |
-| `RETRIEVAL_UNAVAILABLE` | The vector store is unavailable. |
-| `LLM_UNAVAILABLE` | All LLM providers are unavailable. |
-| `RATE_LIMITED` | A provider or API rate limit has been reached. |
-| `INTERNAL_ERROR` | An unexpected failure occurred. The error is logged with its `trace_id`. |
+| POST /documents | Multipart file upload (field: file); PDF, DOCX, TXT, MD. Returns document_id, job_id, status with HTTP 200. |
+| GET /documents | Returns {"items":[{"id":"doc_...","name":"paper.pdf","status":"indexed"}]}. |
+| POST /documents/{doc_id}/reindex | Reprocesses the stored upload, preserving the document ID. Returns a new job ID. An active ingestion job is rejected. |
+| DELETE /documents/{doc_id} | Deletes vectors and relational document/chunk/job records. Returns {"status":"deleted"}. |
+| GET /jobs/{job_id} | Returns job_id, document_id, status, error, updated_at. |
+| GET /health | Reports SQLite, Qdrant, and Redis connectivity; does not test Groq inference. |
 
-## Endpoints
+Job statuses: queued, processing, completed, failed.
+Document statuses: queued, parsing, embedding, indexed, failed.
+A duplicate checksum returns HTTP 409 `DOCUMENT_ALREADY_EXISTS`, with the existing
+`document_id` and `document_name` in `details`. This also covers concurrent uploads
+and renamed copies. No new document or ingestion job is created. Use reindex to
+retry failed ingestion or upgrade old metadata. Different bytes with the same name
+are allowed; PDF and DOCX versions are not treated as byte-identical uploads.
 
-### `GET /health`
+## POST /chat
 
-Returns the status of the API's dependencies.
+First question:
 
-**Authentication:** Not required.
-
-**Example response:**
-
-```json
-{
-  "status": "ok",
-  "dependencies": {
-    "qdrant": "ok",
-    "redis": "ok",
-    "sqlite": "ok",
-    "groq": "ok"
-  }
-}
-```
-
-The overall `status` can be one of:
-
-- `ok` — all dependencies are available.
-- `degraded` — one or more dependencies are experiencing issues.
-- `down` — the service is unavailable.
-
-### `POST /documents`
-
-Uploads a document and queues it for asynchronous ingestion. The response contains a document ID and an ingestion job ID.
-
-**Content type:** `multipart/form-data`
-
-**Fields:**
-
-| Field | Required | Description |
-|---|---:|---|
-| `file` | Yes | The document to upload. |
-| `tags` | No | Comma-separated tags for the document. |
-
-**Success response:** `202 Accepted`
-
-```json
-{
-  "document_id": "doc_01HX...",
-  "job_id": "job_01HX...",
-  "status": "queued"
-}
-```
-
-### `GET /documents`
-
-Returns the documents that the authenticated user is allowed to access.
-
-**Example response:**
-
-```json
-{
-  "items": [
     {
-      "document_id": "doc_01HX...",
-      "name": "paper.pdf",
-      "type": "pdf",
-      "pages": 42,
-      "chunks": 187,
-      "status": "ready",
-      "uploaded_at": "2026-01-12T10:00:00Z"
+      "message": "Compare accuracy in Chapter 4 of paper.pdf.",
+      "filters": {"document_name": "paper.pdf", "chapter": "4"}
     }
-  ]
-}
-```
 
-### `DELETE /documents/{document_id}`
+Follow-up: send the conversation_id returned by the first response.
 
-Deletes the specified document and its related data. This includes its chunks, vectors, and cached answers that cite the document.
-
-**Success response:** `204 No Content`
-
-### `GET /jobs/{job_id}`
-
-Returns the current status of a document ingestion job.
-
-The `status` field can be one of:
-
-- `queued`
-- `parsing`
-- `embedding`
-- `indexed`
-- `failed`
-
-When ingestion fails, the response includes an `error` field containing the reason for the failure.
-
-### `POST /chat`
-
-Sends a question and returns the complete answer in a single JSON response.
-
-**Example request:**
-
-```json
-{
-  "message": "What is the accuracy of Model X in Chapter 4?",
-  "conversation_id": "conv_01HX...",
-  "document_ids": [
-    "doc_01HX..."
-  ]
-}
-```
-
-**Example response:**
-
-```json
-{
-  "conversation_id": "conv_01HX...",
-  "answer": "Model X achieves 92.4% accuracy [paper.pdf, p. 12].",
-  "citations": [
     {
-      "doc_id": "doc_01HX...",
-      "doc_name": "paper.pdf",
-      "page": 12,
-      "section": "4.2",
-      "chunk_id": "chunk_01HX...",
-      "quote": "Model X achieves 92.4% accuracy on the test split."
+      "message": "Which model is best?",
+      "conversation_id": "conv_..."
     }
-  ],
-  "assumptions": [],
-  "conflicts": [],
-  "insufficient": false,
-  "trace_id": "01HX..."
-}
-```
 
-The response includes the answer, resolved citations, any assumptions or conflicts, an indicator of whether the evidence was insufficient, and a trace ID for debugging.
+Filters are optional and strictly validated:
 
-### `POST /chat/stream`
-
-Sends a question and streams the answer using **Server-Sent Events (SSE)**.
-
-The stream emits events in the following order:
-
-| Order | Event | Purpose |
-|---:|---|---|
-| 1 | `meta` | Provides the conversation ID and trace ID. |
-| 2 | `token` | Sends text deltas as the answer is generated. This event can occur multiple times. |
-| 3 | `citations` | Provides the final list of resolved citations. |
-| 4 | `assumptions` | Provides assumptions and conflicts, if any. |
-| 5 | `done` | Marks the end of the stream. |
-
-If an error occurs, the stream emits an `error` event containing the standard error object, then closes.
-
-The frontend uses a Next.js route handler to bridge this SSE protocol to the Vercel AI SDK. The backend does not communicate directly with the browser.
-
-## Rate Limits
-
-The API enforces the following limits on the server:
-
-| Operation | Limit |
+| Field | Type |
 |---|---|
-| Chat requests | 10 requests per minute per user. |
-| Document uploads | 5 documents per minute per user. |
-| Ingestion concurrency | 1 document per user at a time. |
+| doc_id | string |
+| doc_ids | list of strings; empty list intentionally matches nothing |
+| document_name | string; exact filename, case-insensitive |
+| page | positive integer |
+| chapter | string, e.g. "4" |
+| section | section title or numeric section identifier |
+| author | string; exact metadata value, case-insensitive |
+| date | string; metadata date, normally YYYY-MM-DD |
+| file_type | string: pdf, docx, txt, md |
 
-When a rate limit is exceeded, the API returns **`429 Too Many Requests`** with the error code `RATE_LIMITED`.
+Explicit filters remain active through retries. Supported natural-language forms include filenames, "Chapter 4", "page 2", "Section 2.1", dated/published dates, quoted author names, and "PDF documents". Unknown named files match no documents rather than widening the search. Metadata must actually exist in the source; absent author/date/headings are not invented.
+
+Response fields:
+
+    {
+      "answer": "A formatted answer with document/location citations and a Sources list",
+      "state": "answer_ready",
+      "loops": 0,
+      "evidence_count": 3,
+      "sources": [
+        {
+          "chunk_id": "chunk_...",
+          "document_id": "doc_...",
+          "document_name": "paper.pdf",
+          "page": 4,
+          "section": "Chapter 4",
+          "location": null,
+          "quote": "Exact source text"
+        }
+      ],
+      "tool_results": [
+        {
+          "name": "calculator",
+          "output": {"expression":"(a+b+c)/3","inputs":{"a":"92","b":"95","c":"89"},"result":"92"},
+          "chunk_ids": ["chunk_...", "chunk_...", "chunk_..."]
+        }
+      ],
+      "conversation_id": "conv_..."
+    }
+
+state is answer_ready or insufficient_evidence. loops counts additional retrieval rounds (0 to 2).
+Successful chat responses additionally include `question_id` and `usage` (token totals,
+provider attempts, retry waits, per-call records and stage timings). `X-Question-ID`
+is also returned as a header. Each turn gets its own ID, independent of conversation ID.
+Provider/application failures include these diagnostics in `details`; 422 validation
+responses include the header. See [question diagnostics](observability.md) for fields
+and log-filtering commands. Missing provider usage is flagged as unknown rather than
+assumed to be zero.
+Insufficient evidence or rejected answer validation produces an explicit refusal with no sources.
+For DOCX/TXT/Markdown, location is the citation locator; page=1 is an internal logical container, not a rendered physical page.
+
+## Errors
+
+Application errors contain code, message, and details. Missing resources return 404;
+duplicate uploads return 409; upload/reindex validation returns 400; queue submission
+failure returns 503. FastAPI request/schema validation uses its standard 422 detail response.
+
+Provider failures are service errors, not `200 insufficient_evidence` answers:
+
+- `429 LLM_RATE_LIMITED`: the LLM provider rejected the request due to a request/token limit. If the provider supplies a valid wait duration, the response includes a `Retry-After` header (seconds) and `details.retry_after_seconds`.
+- `503 LLM_UNAVAILABLE`: a provider connection or availability failure after bounded retries.
+- `503 LLM_CONFIGURATION_ERROR`: the provider rejected its credentials, model, or request configuration.
+
+For example, a rate-limited chat can return:
+
+```json
+{
+  "code": "LLM_RATE_LIMITED",
+  "message": "Groq has reached a request or token limit. Please try again later.",
+  "details": { "provider": "Groq", "retry_after_seconds": 879 }
+}
+```
+
+These failures do not save a fabricated insufficient-evidence answer to conversation history. A provider wait hint is not a guarantee that all remaining LLM calls for an answer will fit the quota. Genuine missing evidence and exhausted answer-verification attempts still return the normal `insufficient_evidence` result.
+
+Malformed or ungrounded analysis output receives at most one correction per analysis
+pass, shared between tool planning and the evidence verdict. The correction uses the
+same evidence; a verdict correction reuses already executed tool results. If validation
+still fails, `/chat` returns HTTP 503 `ANALYSIS_OUTPUT_INVALID` instead of retrieving
+again or claiming the documents lack evidence. Its `details` include `analysis_stage`,
+`correction_attempts`, `question_id`, and the accumulated `usage`. No failed turn is
+saved. The frontend displays the service-error message with its existing retry action.
+Provider errors and unexpected application errors keep their existing error handling.
+
+Do not interpret health=ok as proof that a particular document, model, provider key, or answer is correct. Poll jobs and inspect their errors.

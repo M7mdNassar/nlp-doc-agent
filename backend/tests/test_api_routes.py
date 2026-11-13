@@ -1,26 +1,57 @@
+import asyncio
+import json
+from contextlib import asynccontextmanager, suppress
+from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from fastapi import UploadFile
 from httpx import ASGITransport, AsyncClient
 
+from src.core.errors import DuplicateDocumentError, ValidationError
+from src.core.observability import current_trace, stage
 from src.domain.entities.document import Document
 from src.domain.entities.job import Job, JobStatus
+from src.domain.exceptions.llm_provider_error import (
+    LLMConfigurationError,
+    LLMProviderError,
+    LLMRateLimitError,
+)
 from src.domain.value_objects.document_id import DocumentId
 
 
 @pytest.fixture
 def api(monkeypatch):
     pytest.importorskip("sentence_transformers")
+
+    # Import the real routers without creating external clients or downloading models.
+    from src.infrastructure.cache import exact_cache
+    from src.infrastructure.embeddings import bge_adapter
+    from src.infrastructure.llm import router
+    from src.infrastructure.rerankers import cross_encoder_adapter
+    from src.infrastructure.vector_store import qdrant_adapter
+
+    for module, name in (
+        (exact_cache, "RedisExactCache"),
+        (bge_adapter, "BGEAdapter"),
+        (router, "LLMRouter"),
+        (cross_encoder_adapter, "CrossEncoderAdapter"),
+        (qdrant_adapter, "QdrantAdapter"),
+    ):
+        monkeypatch.setattr(module, name, Mock())
+
     from src.api.dependencies import providers
     from src.main import create_app
 
-    return create_app(), providers
+    app = create_app()
+    return app, providers
 
 
 @pytest.fixture
 async def client(api):
     app, _ = api
+    # ASGITransport deliberately does not run the external-service startup lifespan.
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         yield client
 
@@ -35,10 +66,97 @@ async def test_chat_dependency_and_response(api, client):
 
     assert response.status_code == 200
     assert response.json() == result
-    uc.execute.assert_awaited_once_with("Question?")
+    assert response.json()["question_id"] == response.headers["x-question-id"]
+    assert response.json()["usage"]["provider_requests"] == 0
+    assert current_trace() is None
+    uc.execute.assert_awaited_once_with("Question?", None, None)
 
 
-async def test_document_upload_uses_multipart(api, client):
+async def test_stream_route_preserves_question_scope_and_completed_result(api, client):
+    app, providers = api
+
+    async def execute(*args):
+        with stage("retrieval"), stage("vector_search"):
+            pass
+        return {
+            "answer": "Verified",
+            "state": "answer_ready",
+            "loops": 0,
+            "evidence_count": 1,
+            "sources": [],
+            "tool_results": [],
+            "conversation_id": "c1",
+        }
+
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: SimpleNamespace(
+        execute=execute
+    )
+    response = await client.post("/chat/stream", json={"message": "Question?"})
+    assert response.headers["content-type"].startswith("text/event-stream")
+    frames = [
+        json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")
+    ]
+    assert frames[0]["type"] == "progress"
+    answer = frames[-1]["result"]
+    assert answer["question_id"] == response.headers["x-question-id"]
+    assert answer["tools_used"][0]["name"] == "hybrid_search"
+    assert answer["usage"]["stages"][0]["stage"] == "vector_search"
+    assert current_trace() is None
+
+
+async def test_stream_disconnect_stops_execution_before_dependency_cleanup(api):
+    app, providers = api
+    disconnected, cancelled = asyncio.Event(), asyncio.Event()
+    cleanup = []
+
+    async def execute(*args):
+        try:
+            with stage("retrieval"):
+                await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    async def dependency():
+        yield SimpleNamespace(execute=execute)
+        cleanup.append(cancelled.is_set())
+
+    app.dependency_overrides[providers.get_ask_question_uc] = dependency
+    received = False
+
+    async def receive():
+        nonlocal received
+        if not received:
+            received = True
+            return {"type": "http.request", "body": b'{"message":"Question?"}', "more_body": False}
+        await disconnected.wait()
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] == "http.response.body" and b'"type": "progress"' in message.get(
+            "body", b""
+        ):
+            disconnected.set()
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/chat/stream",
+        "raw_path": b"/chat/stream",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [(b"content-type", b"application/json")],
+        "server": ("test", 80),
+        "client": ("test", 123),
+    }
+    await asyncio.wait_for(app(scope, receive, send), 2)
+    assert cancelled.is_set()
+    assert cleanup == [True]
+
+
+async def test_document_upload_uses_multipart_and_injected_use_case(api, client):
     app, providers = api
     doc = Document(DocumentId.generate(), "sample.txt", "txt", "checksum")
     job = Job("job-test", doc.id)
@@ -51,16 +169,55 @@ async def test_document_upload_uses_multipart(api, client):
 
     assert response.status_code == 200
     assert response.json() == {"document_id": str(doc.id), "job_id": job.job_id, "status": "queued"}
+    uc.execute.assert_awaited_once_with("sample.txt", "txt", b"contents")
 
 
-async def test_job_status_injects_database_session(api, client, monkeypatch):
+@pytest.mark.parametrize("filename", [None, ""])
+async def test_upload_without_filename_is_rejected_before_use_case(api, filename):
+    from src.api.routers.documents import upload_document
+
+    uc = SimpleNamespace(execute=AsyncMock())
+    upload = UploadFile(file=BytesIO(b"contents"), filename=filename)
+    try:
+        with pytest.raises(ValidationError, match="filename") as error:
+            await upload_document(upload, uc)
+        assert error.value.status_code == 400
+        uc.execute.assert_not_awaited()
+    finally:
+        await upload.close()
+
+
+async def test_list_and_delete_document_dependencies(api, client):
+    app, providers = api
+    doc = Document(DocumentId.generate(), "sample.txt", "txt", "checksum")
+    list_uc = SimpleNamespace(execute=AsyncMock(return_value=[doc]))
+    delete_uc = SimpleNamespace(execute=AsyncMock())
+    app.dependency_overrides[providers.get_list_docs_uc] = lambda: list_uc
+    app.dependency_overrides[providers.get_delete_doc_uc] = lambda: delete_uc
+
+    response = await client.get("/documents")
+    assert response.status_code == 200
+    assert response.json() == {"items": [{"id": str(doc.id), "name": doc.name, "status": "queued"}]}
+    response = await client.delete(f"/documents/{doc.id}")
+    assert response.status_code == 200
+    assert response.json() == {"status": "deleted"}
+    delete_uc.execute.assert_awaited_once_with(doc.id)
+
+
+@pytest.mark.parametrize("status", [JobStatus.QUEUED, JobStatus.FAILED])
+async def test_job_status_injects_database_session(api, client, monkeypatch, status):
     app, providers = api
     session = object()
 
     async def fake_session():
         yield session
 
-    job = Job("job-test", DocumentId.generate(), JobStatus.QUEUED)
+    job = Job(
+        "job-test",
+        DocumentId.generate(),
+        status,
+        "parse failed" if status == JobStatus.FAILED else None,
+    )
     repo = SimpleNamespace(get=AsyncMock(return_value=job))
     repository_factory = Mock(return_value=repo)
     monkeypatch.setattr(providers, "JobRepository", repository_factory)
@@ -69,7 +226,14 @@ async def test_job_status_injects_database_session(api, client, monkeypatch):
     response = await client.get("/jobs/job-test")
 
     assert response.status_code == 200
-    assert response.json()["job_id"] == job.job_id
+    assert response.json() == {
+        "job_id": job.job_id,
+        "document_id": str(job.document_id),
+        "status": status.value,
+        "error": job.error,
+        "updated_at": job.updated_at.isoformat(),
+    }
+    repository_factory.assert_called_once_with(session)
     repo.get.assert_awaited_once_with("job-test")
 
 
@@ -79,4 +243,252 @@ async def test_missing_job_returns_404(api, client):
     app.dependency_overrides[providers.get_job_status_uc] = lambda: uc
 
     response = await client.get("/jobs/missing")
+
     assert response.status_code == 404
+    assert response.json()["code"] == "NOT_FOUND"
+    uc.execute.assert_awaited_once_with("missing")
+
+
+@pytest.mark.parametrize("failed", [None, "sqlite", "qdrant", "redis"])
+async def test_health_response_preserves_dependency_statuses(api, client, monkeypatch, failed):
+    from src.api.routers import health
+
+    def operation(name):
+        return AsyncMock(side_effect=RuntimeError("offline") if failed == name else None)
+
+    @asynccontextmanager
+    async def connection():
+        yield SimpleNamespace(execute=operation("sqlite"))
+
+    monkeypatch.setattr(health, "engine", SimpleNamespace(connect=connection))
+    monkeypatch.setattr(
+        health,
+        "QdrantAdapter",
+        lambda: SimpleNamespace(client=SimpleNamespace(get_collections=operation("qdrant"))),
+    )
+    monkeypatch.setattr(
+        health, "get_redis_client", lambda: SimpleNamespace(ping=operation("redis"))
+    )
+
+    response = await client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "degraded" if failed else "ok",
+        "dependencies": {
+            name: "down" if name == failed else "ok" for name in ("sqlite", "qdrant", "redis")
+        },
+    }
+
+
+def test_openapi_registers_jobs_and_required_file(api):
+    app, _ = api
+    schema = app.openapi()
+    assert "/jobs/{job_id}" in schema["paths"]
+    upload = schema["paths"]["/documents"]["post"]
+    assert upload["requestBody"]["required"] is True
+    assert "multipart/form-data" in upload["requestBody"]["content"]
+
+
+async def test_chat_forwards_conversation_and_validated_filters(api, client):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock(return_value={"answer": "ok"}))
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    response = await client.post(
+        "/chat",
+        json={
+            "message": "Question",
+            "conversation_id": "conv_test",
+            "filters": {"chapter": "4", "page": 2},
+        },
+    )
+    assert response.status_code == 200
+    args = uc.execute.await_args.args
+    assert args[:2] == ("Question", "conv_test")
+    assert args[2].model_dump(exclude_none=True) == {"chapter": "4", "page": 2}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"message": "   "},
+        {"message": "q", "filters": {"page": 0}},
+        {"message": "q", "filters": {"page": "2"}},
+        {"message": "q", "filters": {"unknown": "ignored?"}},
+    ],
+)
+async def test_chat_rejects_invalid_input_instead_of_ignoring_filters(api, client, body):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock())
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    assert (await client.post("/chat", json=body)).status_code == 422
+    uc.execute.assert_not_awaited()
+
+
+async def test_reindex_endpoint_returns_new_job(api, client):
+    app, providers = api
+    doc = Document(DocumentId.generate(), "existing.pdf", "pdf", "sum")
+    job = Job("job-reindex", doc.id)
+    uc = SimpleNamespace(reindex=AsyncMock(return_value=(doc, job)))
+    app.dependency_overrides[providers.get_upload_doc_uc] = lambda: uc
+    response = await client.post(f"/documents/{doc.id}/reindex")
+    assert response.status_code == 200
+    assert response.json()["job_id"] == "job-reindex"
+    uc.reindex.assert_awaited_once_with(doc.id)
+
+
+@pytest.mark.parametrize(
+    "error,status,code,retry_after",
+    [
+        (LLMRateLimitError("Groq", 879), 429, "LLM_RATE_LIMITED", "879"),
+        (LLMRateLimitError("Groq"), 429, "LLM_RATE_LIMITED", None),
+        (LLMProviderError("Groq"), 503, "LLM_UNAVAILABLE", None),
+        (LLMConfigurationError("Groq"), 503, "LLM_CONFIGURATION_ERROR", None),
+    ],
+)
+async def test_chat_provider_failures_are_service_errors(
+    api, client, error, status, code, retry_after
+):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock(side_effect=error))
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    response = await client.post("/chat", json={"message": "Projects?"})
+    assert response.status_code == status
+    body = response.json()
+    assert body["code"] == code
+    assert body["message"] == str(error)
+    assert body["details"]["provider"] == "Groq"
+    assert "state" not in body
+    assert response.headers.get("retry-after") == retry_after
+    assert body["details"].get("retry_after_seconds") == (int(retry_after) if retry_after else None)
+    assert response.headers["cache-control"] == "no-store"
+    assert body["details"]["question_id"] == response.headers["x-question-id"]
+    assert "usage" in body["details"]
+
+
+async def test_duplicate_upload_is_a_clear_conflict(api, client):
+    app, providers = api
+    uc = SimpleNamespace(
+        execute=AsyncMock(side_effect=DuplicateDocumentError("doc_existing", "original.pdf"))
+    )
+    app.dependency_overrides[providers.get_upload_doc_uc] = lambda: uc
+    response = await client.post(
+        "/documents", files={"file": ("renamed.pdf", b"same", "application/pdf")}
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == "DOCUMENT_ALREADY_EXISTS"
+    assert response.json()["details"]["document_id"] == "doc_existing"
+    assert "already uploaded" in response.json()["message"]
+    assert "job_id" not in response.json()
+
+
+async def test_question_ids_cover_validation_errors_and_are_unique(api, client):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock())
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    first = await client.post("/chat", json={"message": ""})
+    second = await client.post("/chat", json={"message": ""})
+    assert first.status_code == second.status_code == 422
+    assert first.headers["x-question-id"] != second.headers["x-question-id"]
+    assert current_trace() is None
+    uc.execute.assert_not_awaited()
+
+
+async def test_unexpected_question_failure_has_safe_diagnostics(api, client):
+    app, providers = api
+    uc = SimpleNamespace(execute=AsyncMock(side_effect=RuntimeError("private document text")))
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: uc
+    response = await client.post("/chat", json={"message": "q"})
+    assert response.status_code == 500
+    assert response.json()["details"]["question_id"] == response.headers["x-question-id"]
+    assert "private document text" not in response.text
+
+
+async def test_chat_logs_and_response_group_real_adapter_usage(api, client, monkeypatch, caplog):
+    import logging
+
+    from src.domain.value_objects.token_budget import TokenBudget
+    from tests.test_llm_provider_errors import adapter_with, rate_error
+    from tests.test_observability import completion
+
+    app, providers = api
+    adapter, _, _ = adapter_with(monkeypatch, [completion(), rate_error("900")])
+
+    async def execute(*args):
+        with stage("query_rewrite"):
+            await adapter.generate("PRIVATE_QUESTION", "PRIVATE_SOURCE", TokenBudget(100))
+        with stage("tool_plan"):
+            await adapter.generate("PRIVATE_QUESTION", "PRIVATE_SOURCE", TokenBudget(100))
+
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: SimpleNamespace(
+        execute=execute
+    )
+    with caplog.at_level(logging.INFO):
+        response = await client.post("/chat", json={"message": "PRIVATE_QUESTION"})
+    assert response.status_code == 429
+    details = response.json()["details"]
+    assert details["usage"]["total_tokens"] == 125
+    assert details["usage"]["provider_requests"] == 2
+    events = []
+    for record in caplog.records:
+        with suppress(ValueError):
+            events.append(json.loads(record.getMessage()))
+    requests = [e for e in events if e.get("event") == "llm_request_completed"]
+    assert len(requests) == 2
+    assert all(e["question_id"] == details["question_id"] for e in requests)
+    assert [e["stage"] for e in requests] == ["query_rewrite", "tool_plan"]
+    assert any(e.get("event") == "question_completed" for e in events)
+    assert "PRIVATE_" not in caplog.text
+
+
+async def test_exhausted_analysis_returns_safe_503_with_question_usage(
+    api,
+    client,
+    monkeypatch,
+    caplog,
+    sample_chunks,
+):
+    import logging
+
+    from src.application.agents.analyst.analyst_agent import AnalystAgent
+    from src.domain.entities.evidence import EvidencePackage
+    from tests.test_llm_provider_errors import adapter_with
+    from tests.test_observability import completion
+
+    adapter, create, _ = adapter_with(
+        monkeypatch,
+        [
+            completion(content='{"tools":[]}'),
+            completion(content='{"has_enough_evidence":"PRIVATE_VALUE","PRIVATE_KEY":true}'),
+            completion(content="PRIVATE_INVALID_JSON"),
+        ],
+    )
+    app, providers = api
+
+    async def execute(*args):
+        return await AnalystAgent(adapter).analyze(
+            "PRIVATE_QUESTION", EvidencePackage(chunks=sample_chunks)
+        )
+
+    app.dependency_overrides[providers.get_ask_question_uc] = lambda: SimpleNamespace(
+        execute=execute
+    )
+    with caplog.at_level(logging.INFO):
+        response = await client.post("/chat", json={"message": "PRIVATE_QUESTION"})
+    body = response.json()
+    assert response.status_code == 503
+    assert body["code"] == "ANALYSIS_OUTPUT_INVALID" and "state" not in body
+    assert body["details"]["analysis_stage"] == "analysis_verdict"
+    assert body["details"]["correction_attempts"] == 1
+    assert body["details"]["question_id"] == response.headers["x-question-id"]
+    assert body["details"]["usage"]["total_tokens"] == 375
+    assert create.await_count == 3
+    events = []
+    for record in caplog.records:
+        with suppress(ValueError):
+            events.append(json.loads(record.getMessage()))
+    invalid = [e for e in events if e.get("event") == "analysis_output_invalid"]
+    assert len(invalid) == 2
+    assert all(e["question_id"] == body["details"]["question_id"] for e in invalid)
+    assert any(issue["field"] == "has_enough_evidence" for issue in invalid[0]["issues"])
+    assert "PRIVATE_" not in caplog.text + response.text

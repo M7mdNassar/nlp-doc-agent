@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -26,6 +27,7 @@ class DocumentModel(Base):
     chunks: Mapped[list["ChunkModel"]] = relationship(
         back_populates="document", cascade="all, delete-orphan"
     )
+    jobs: Mapped[list["JobModel"]] = relationship(cascade="all, delete-orphan")
 
 
 class ChunkModel(Base):
@@ -37,6 +39,7 @@ class ChunkModel(Base):
     page: Mapped[int] = mapped_column(Integer, nullable=False)
     section: Mapped[str | None] = mapped_column(String, nullable=True)
     parent_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
 
     document: Mapped["DocumentModel"] = relationship(back_populates="chunks")
 
@@ -53,3 +56,11 @@ class JobModel(Base):
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+
+
+class ConversationModel(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False)
+    messages: Mapped[list[dict[str, str]]] = mapped_column(JSON, default=list)

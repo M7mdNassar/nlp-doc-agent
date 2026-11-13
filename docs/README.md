@@ -8,11 +8,12 @@ This folder contains the technical documentation for NLP Doc Chat. It is intende
 |---|---|
 | [architecture.md](architecture.md) | High-level architecture, layers, components, agent pipeline, data flow |
 | [reliability.md](reliability.md) | System invariants, failure handling, degraded modes, edge cases |
-| [api-reference.md](api-reference.md) | HTTP endpoints, SSE stream protocol, error codes |
+| [api-reference.md](api-reference.md) | Implemented HTTP endpoints, filters, citations, and error responses |
 | [data-model.md](data-model.md) | Domain entities, value objects, ports, and schema conventions |
 | [deployment.md](deployment.md) | Docker Compose services, environment variables, volumes, local operations |
 | [decisions/](decisions/README.md) | Architecture Decision Records (ADRs) for significant choices |
-| [api/openapi.json](api/openapi.json) | Generated OpenAPI schema (source of truth for the API client) |
+| [Live OpenAPI schema](http://localhost:8000/openapi.json) | Schema served by the running backend |
+| [task7-implementation.md](task7-implementation.md) | Task requirements, before/after behavior, and verification results |
 
 ## Conventions
 

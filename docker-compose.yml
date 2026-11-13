@@ -28,6 +28,18 @@ services:
       timeout: 5s
       retries: 5
 
+  migrate:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/backend.Dockerfile
+      target: production
+    restart: "no"
+    env_file:
+      - .env
+    volumes:
+      - data_sqlite:/app/data
+    command: alembic upgrade head
+
   backend:
     build:
       context: .
@@ -43,6 +55,8 @@ services:
       - data_uploads:/app/data/uploads
       - data_sqlite:/app/data
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       qdrant:
         condition: service_healthy
       redis:
@@ -59,6 +73,8 @@ services:
       - data_uploads:/app/data/uploads
       - data_sqlite:/app/data
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       backend:
         condition: service_started
       redis:
@@ -70,11 +86,10 @@ services:
       dockerfile: infrastructure/docker/frontend.Dockerfile
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
-    env_file:
-      - .env
+      - BACKEND_URL=http://backend:8000
     depends_on:
       - backend
 

@@ -11,3 +11,7 @@ class ParsedElement:
     section: str | None = None
     is_table: bool = False
     table_data: dict[str, Any] | None = None
+    chapter: str | None = None
+    location: str | None = None
+    author: str = ""
+    date: str = ""
