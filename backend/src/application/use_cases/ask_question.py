@@ -1,5 +1,6 @@
 from src.application.agents.orchestrator.orchestrator import Orchestrator
 from src.application.agents.retriever.metadata_filter import MetadataFilterResolver
+from src.application.answer_cache import AnswerCache
 from src.core.errors import NotFoundError
 from src.core.observability import stage
 from src.domain.entities.answer import ChatResult
@@ -15,11 +16,13 @@ class AskQuestionUseCase:
         orchestrator: Orchestrator,
         conversations: ConversationRepository,
         documents: DocumentRepository,
+        answer_cache: AnswerCache | None = None,
     ):
         self.orchestrator = orchestrator
         self.conversations = conversations
         self.documents = documents
         self.filter_resolver = MetadataFilterResolver()
+        self.answer_cache = answer_cache
 
     async def execute(
         self,
@@ -42,9 +45,16 @@ class AskQuestionUseCase:
             documents = await self.documents.list_all()
             metrics["document_count"] = len(documents)
         resolved = self.filter_resolver.resolve(question, documents, filters)
-        result = await self.orchestrator.process(
-            question, resolved.model_dump(exclude_none=True), history, documents
-        )
+        resolved_filters = resolved.model_dump(exclude_none=True)
+
+        async def generate() -> ChatResult:
+            return await self.orchestrator.process(question, resolved_filters, history, documents)
+
+        if self.answer_cache:
+            result = await self.answer_cache.run(question, resolved_filters, history, generate)
+        else:
+            result = await generate()
+            result["cache"] = {"status": "bypass", "reason": "disabled"}
         conversation.add_message("user", question)
         conversation.add_message("assistant", result["answer"])
         with stage("conversation_save"):

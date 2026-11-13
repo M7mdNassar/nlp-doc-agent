@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted.
+Implemented with conservative semantic matching. See [current behavior and tests](../answer-cache.md).
 
 ## Context
 
@@ -15,21 +15,22 @@ An exact-match cache alone has a low hit rate because users paraphrase. A semant
 
 ## Decision
 
-Two cache layers are used together:
+The current implementation uses:
 
-1. **Exact cache (Redis).** Key is `sha256(normalized_query + sorted(filters) + params_hash)`. Value is the serialized answer package. Sub-50 ms lookups.
-2. **Semantic cache (Qdrant).** A dedicated collection stores the embedding of the normalized query and the answer package. On lookup, the query is embedded and searched against this collection. A hit requires cosine similarity above a **strict threshold**, tuned on the golden evaluation set.
-3. **Embedding cache (Redis).** `sha256(text)` → vector. Embeddings are deterministic, so this is always safe.
-4. **In-flight lock (Redis).** When two identical queries arrive concurrently, one computes and the other waits on a lock and reads the result.
+1. **Exact answers (Redis).** A hashed question key is scoped by effective filters, history, corpus fingerprint and pipeline/model version. Only previously verified answers are stored, with a 24-hour default TTL.
+2. **Guarded semantic lookup (Qdrant).** A separate collection stores query embeddings and pointers to Redis entries. A hit requires cosine similarity at least 0.94 AND the same ordered subject and constraints after removing a supported introductory phrase. This is narrow paraphrase reuse, not general semantic equivalence. The threshold has targeted regression coverage, not a completed golden-set calibration.
+3. **In-flight lease (Redis).** Identical requests share one generation. Leases renew while work runs and release on failure/cancellation. Waiting is bounded; expiry of the wait budget returns an in-progress error rather than starting duplicate generation.
 
-Invalidation is **citation-based**. Every cached answer records the document IDs it cites. When any of those documents is updated or deleted, all affected entries are evicted from both layers.
+Invalidation uses a fingerprint of all documents, indexed content and ingestion jobs. Adding, editing, deleting or reindexing any document makes old entries unreachable, including answers affected by newly introduced evidence. Old entries expire by TTL. Every hit also checks the current source metadata and exact quotes. Changes to effective conversation history or output requirements cannot reuse an incompatible answer.
+
+A separate embedding-result cache is not implemented. Loaded model instances are reused, and providers may independently report cached prompt tokens; neither is an answer-cache hit.
 
 ## Consequences
 
 Easier:
 
 - Repeated questions are answered instantly.
-- Paraphrased questions benefit from the semantic layer.
+- Eligible, tightly guarded paraphrases benefit from the semantic layer; other paraphrases intentionally miss.
 - Rate-limit pressure on the LLM provider is reduced.
 - Duplicate concurrent work is eliminated.
 
@@ -37,11 +38,11 @@ Harder:
 
 - Two caches to maintain and keep consistent.
 - The semantic cache requires tuning. The threshold is a real, documented knob, not a magic number.
-- Cache invalidation must be wired into the document lifecycle — this is a hard requirement, not a nice-to-have.
+- Corpus fingerprint checks enforce lifecycle invalidation without a database migration. For large corpora, use a transactional revision counter instead of scanning content.
 
 Risks accepted:
 
-- A wrongly-hit semantic cache entry is worse than a miss. The threshold is chosen to prefer misses. This is monitored via the evaluation harness.
+- A wrongly-hit semantic entry is worse than a miss. Similarity alone never authorizes reuse; preservation of subject, order, case, quantities and instructions is required. Broad semantic reuse remains deliberately unsupported.
 
 ## Alternatives considered
 

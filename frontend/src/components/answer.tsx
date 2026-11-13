@@ -3,7 +3,14 @@
 import { useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { ArrowUpRight, Check, Copy, FileSearch, RotateCcw } from "lucide-react";
+import {
+  ArrowUpRight,
+  Check,
+  Copy,
+  Database,
+  FileSearch,
+  RotateCcw,
+} from "lucide-react";
 import type { Answer, Message, Source } from "@/lib/models";
 import { sourceLocation } from "@/lib/models";
 import { Brand, FileBadge } from "./ui";
@@ -11,6 +18,45 @@ import { ActivityHistory, ToolsUsed } from "./agent-activity";
 
 function label(text: string) {
   return text.replace(/[\[\]\r\n]/g, " ").trim();
+}
+
+const cacheLabels = {
+  miss: {
+    label: "Cache miss",
+    description: "No saved answer matched this request.",
+  },
+  exact_hit: {
+    label: "Cache hit · Exact",
+    description:
+      "Reused a verified answer for this exact request. Source quotes checked.",
+  },
+  semantic_hit: {
+    label: "Cache hit · Semantic",
+    description:
+      "Reused a verified answer for a matching paraphrase. Source quotes checked.",
+  },
+  bypass: {
+    label: "Cache bypassed",
+    description: "Cache was not used for this request.",
+  },
+} as const;
+
+function CacheStatus({ cache }: { cache: Answer["cache"] }) {
+  if (!cache) return null;
+  const details = cacheLabels[cache.status];
+  return (
+    <div
+      className="cache-status"
+      data-cache-status={cache.status}
+      role="status"
+    >
+      <strong className="cache-status-badge">
+        <Database size={13} aria-hidden="true" />
+        {details.label}
+      </strong>
+      <span>{details.description}</span>
+    </div>
+  );
 }
 export function answerMarkdown(answer: Answer) {
   let text = answer.answer;
@@ -89,6 +135,7 @@ export function AnswerMessage({
           </div>
         ) : (
           <>
+            <CacheStatus cache={answer?.cache} />
             {answer?.state === "insufficient_evidence" && (
               <div className="evidence-notice">
                 <FileSearch size={19} />

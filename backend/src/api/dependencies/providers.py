@@ -1,4 +1,7 @@
+import hashlib
+import json
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends
@@ -10,13 +13,16 @@ from src.application.agents.orchestrator.orchestrator import Orchestrator
 from src.application.agents.retriever.context_selector import ContextSelector
 from src.application.agents.retriever.query_rewriter import QueryRewriter
 from src.application.agents.retriever.retriever_agent import RetrieverAgent
+from src.application.answer_cache import AnswerCache
 from src.application.citations.verifier import CitationVerifier
 from src.application.use_cases.ask_question import AskQuestionUseCase
 from src.application.use_cases.delete_document import DeleteDocumentUseCase
 from src.application.use_cases.get_job_status import GetJobStatusUseCase
 from src.application.use_cases.list_documents import ListDocumentsUseCase
 from src.application.use_cases.upload_document import UploadDocumentUseCase
+from src.core.config import settings
 from src.core.observability import stage
+from src.domain.ports.answer_cache import AnswerCacheStore
 from src.infrastructure.relational.db import get_db_session
 from src.infrastructure.relational.repositories.conversation_repository import (
     ConversationRepository,
@@ -61,6 +67,39 @@ def get_vector_store() -> "QdrantAdapter":  # 2. Add return type hint
     from src.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
 
     return QdrantAdapter()
+
+
+@lru_cache
+def get_answer_cache_store() -> AnswerCacheStore:
+    from src.infrastructure.cache.answer_store import RedisQdrantAnswerStore
+
+    return RedisQdrantAnswerStore()
+
+
+@lru_cache
+def answer_cache_parameters() -> str:
+    digest = hashlib.sha256()
+    # A changed backend invalidates saved approvals, including prompt/parser changes.
+    for path in sorted(Path(__file__).resolve().parents[2].rglob("*.py")):
+        digest.update(str(path.relative_to(Path(__file__).resolve().parents[2])).encode())
+        digest.update(path.read_bytes())
+    digest.update(
+        json.dumps(
+            {
+                key: getattr(settings, key)
+                for key in (
+                    "ANSWER_CACHE_VERSION",
+                    "LLM_MODEL",
+                    "LLM_FALLBACK_MODELS",
+                    "OPENROUTER_FALLBACK_MODELS",
+                    "EMBEDDING_MODEL",
+                    "RERANKER_MODEL",
+                )
+            },
+            sort_keys=True,
+        ).encode()
+    )
+    return digest.hexdigest()
 
 
 # --- Database Dependency ---
@@ -120,6 +159,20 @@ def _build_ask_question_uc(session: AsyncSession) -> AskQuestionUseCase:
         ),
     )
 
+    cache = None
+    if settings.ANSWER_CACHE_ENABLED:
+        from src.infrastructure.cache.corpus import SqlCacheCorpus
+
+        cache = AnswerCache(
+            get_answer_cache_store(),
+            SqlCacheCorpus(session),
+            get_embedder(),
+            answer_cache_parameters(),
+            ttl=settings.ANSWER_CACHE_TTL_SECONDS,
+            semantic=settings.ANSWER_CACHE_SEMANTIC_ENABLED,
+            threshold=settings.ANSWER_CACHE_SIMILARITY_THRESHOLD,
+            wait_seconds=settings.ANSWER_CACHE_WAIT_SECONDS,
+        )
     return AskQuestionUseCase(
-        orchestrator, ConversationRepository(session), DocumentRepository(session)
+        orchestrator, ConversationRepository(session), DocumentRepository(session), cache
     )

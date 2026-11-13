@@ -27,6 +27,34 @@ const answer: Answer = {
   conversation_id: "conv_browser_test",
 };
 
+for (const [status, label] of [
+  ["miss", "Cache miss"],
+  ["exact_hit", "Cache hit · Exact"],
+  ["semantic_hit", "Cache hit · Semantic"],
+  ["bypass", "Cache bypassed"],
+] as const) {
+  test(`shows and persists ${status} with cached sources`, async ({ page }) => {
+    const api = await mockApi(page);
+    api.setChat({
+      ...answer,
+      cache: {
+        status,
+        age_seconds: 4,
+        similarity: status === "semantic_hit" ? 0.99 : null,
+      },
+    });
+    await page.goto("/");
+    await page
+      .getByRole("textbox", { name: "Ask a question about your documents" })
+      .fill("Explain the result.");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
+    await expect(page.getByText("Research report.pdf").first()).toBeVisible();
+  });
+}
+
 async function mockApi(page: Page, initial: DocumentItem[] = documents) {
   let items = [...initial];
   const chats: Record<string, unknown>[] = [];

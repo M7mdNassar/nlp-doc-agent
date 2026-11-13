@@ -14,7 +14,11 @@ class MetadataFilterResolver:
         mentioned = [
             str(doc.id)
             for doc in documents
-            if re.search(r"(?<![\w.-])" + re.escape(doc.name) + r"(?![\w.-])", question, re.I)
+            # A terminal period/ellipsis is sentence punctuation. A dot followed
+            # by filename characters still belongs to a different filename.
+            if re.search(
+                r"(?<![\w.-])" + re.escape(doc.name) + r"(?![\w-]|\.+[\w-])", question, re.I
+            )
         ]
         # Unknown named files must return no results, not silently search other files.
         file_mentions = re.findall(r"[\w.-]+\.(?:pdf|docx|txt|md)\b", question, re.I)
