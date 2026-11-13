@@ -15,9 +15,6 @@ from src.application.agents.retriever.query_rewriter import QueryRewriter
 from src.application.agents.retriever.retriever_agent import RetrieverAgent
 from src.application.answer_cache import AnswerCache
 from src.application.citations.verifier import CitationVerifier
-from src.application.tools.calculator import Calculator
-from src.application.tools.document_comparison import DocumentComparison
-from src.application.tools.registry import ToolRegistry
 from src.application.use_cases.ask_question import AskQuestionUseCase
 from src.application.use_cases.delete_document import DeleteDocumentUseCase
 from src.application.use_cases.get_job_status import GetJobStatusUseCase
@@ -131,14 +128,8 @@ def _build_ask_question_uc(session: AsyncSession) -> AskQuestionUseCase:
     rewriter = QueryRewriter(get_llm())
     retriever = RetrieverAgent(get_embedder(), get_vector_store(), get_reranker())
 
-    # Setup Tools
-    registry = ToolRegistry()
-    registry.register(Calculator())
-    registry.register(DocumentComparison())
-    # Table Extractor needs evidence, so it's registered dynamically in a real ReAct,
-    # but for our simplified tool loop, the Analyst prompt will handle context.
-
-    analyst = AnalystAgent(get_llm(), registry)
+    # AnalystTools executes validated requests against each question's evidence.
+    analyst = AnalystAgent(get_llm())
     answer = AnswerAgent(get_llm())
     verifier = CitationVerifier()
 

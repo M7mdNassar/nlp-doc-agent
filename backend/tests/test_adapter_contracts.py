@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from qdrant_client import AsyncQdrantClient, models
@@ -9,7 +9,7 @@ from src.domain.value_objects.chunk_id import ChunkId
 from src.domain.value_objects.document_id import DocumentId
 from src.domain.value_objects.sparse_vector import SparseVector
 from src.domain.value_objects.token_budget import TokenBudget
-from src.infrastructure.llm import groq_adapter
+from src.infrastructure.llm import groq_adapter, router
 from src.infrastructure.vector_store import qdrant_adapter
 from src.infrastructure.vector_store.schema import (
     COLLECTION_NAME,
@@ -57,17 +57,43 @@ async def test_groq_stream_is_directly_async_iterable(monkeypatch):
     assert tokens == ["Hello", " world"]
     assert create.await_args.kwargs["stream"] is True
 
+
+async def test_stream_failure_propagates_without_replaying_tokens(monkeypatch):
+    async def response():
+        yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="first"))])
+        raise RuntimeError("connection lost")
+
+    create = AsyncMock(return_value=response())
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(groq_adapter, "AsyncGroq", lambda **kwargs: client)
     adapter = groq_adapter.GroqAdapter()
-    tokens = [token async for token in adapter.stream("q", "s", TokenBudget(10))]
+    tokens = []
+    with pytest.raises(RuntimeError, match="connection lost"):
+        async for token in adapter.stream("q", "s", TokenBudget(10)):
+            tokens.append(token)
 
-    assert tokens == ["Hello", " world"]
+    assert tokens == ["first"]
+    create.assert_awaited_once()
 
 
-async def test_qdrant_round_trip_preserves_domain_ids(monkeypatch):
-    client = AsyncQdrantClient(location=":memory:")
+@pytest.mark.parametrize("counts", [(1, 0, 1), (1, 1, 0), (0, 1, 1)])
+async def test_vector_count_mismatch_is_rejected_before_upload(monkeypatch, counts):
+    client = SimpleNamespace(upsert=AsyncMock())
     monkeypatch.setattr(qdrant_adapter, "AsyncQdrantClient", lambda **kwargs: client)
     adapter = qdrant_adapter.QdrantAdapter()
 
+    with pytest.raises(ValueError, match="equal lengths"):
+        await adapter.upsert(
+            [make_chunk()] * counts[0], [[1.0]] * counts[1], [SparseVector([1], [1.0])] * counts[2]
+        )
+
+    client.upsert.assert_not_awaited()
+
+
+async def test_qdrant_round_trip_preserves_domain_ids_and_is_idempotent(monkeypatch):
+    client = AsyncQdrantClient(location=":memory:")
+    monkeypatch.setattr(qdrant_adapter, "AsyncQdrantClient", lambda **kwargs: client)
+    adapter = qdrant_adapter.QdrantAdapter()
     try:
         await client.create_collection(
             COLLECTION_NAME,
@@ -79,14 +105,14 @@ async def test_qdrant_round_trip_preserves_domain_ids(monkeypatch):
         chunk = make_chunk()
         dense = [1.0, 0.0, 0.0]
         sparse = SparseVector([2], [1.0])
-
-        # Upsert and check search
         await adapter.upsert([chunk], [dense], [sparse])
+        await adapter.upsert([chunk], [dense], [sparse])
+        assert (await client.count(COLLECTION_NAME)).count == 1
+
         evidence = await adapter.hybrid_search(dense, sparse, {"doc_id": str(chunk.document_id)})
-
         assert evidence.chunks == [chunk]
+        assert evidence.diagnostics == {"raw_results": "1"}
 
-        # Delete and check
         await adapter.delete_by_document(str(chunk.document_id))
         assert (await client.count(COLLECTION_NAME)).count == 0
     finally:

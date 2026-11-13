@@ -4,7 +4,6 @@ import structlog
 
 from src.domain.exceptions.llm_provider_error import LLMProviderError
 from src.domain.ports.llm import LLMClient
-from src.domain.value_objects.rewritten_query import RewrittenQuery
 from src.domain.value_objects.token_budget import TokenBudget
 
 logger = structlog.get_logger(__name__)
@@ -44,4 +43,4 @@ class QueryRewriter:
             raise
         except Exception as e:
             logger.warning(f"Query rewrite failed: {e}. Using original.")
-            return RewrittenQuery(query=query, filters={})
+            return query

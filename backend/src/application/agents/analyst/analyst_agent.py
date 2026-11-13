@@ -154,9 +154,8 @@ class _AnalysisRecovery:
 
 
 class AnalystAgent:
-    def __init__(self, llm: LLMClient, registry: ToolRegistry):
+    def __init__(self, llm: LLMClient):
         self.llm = llm
-        self.registry = registry
 
     async def analyze(self, question: str, evidence: EvidencePackage) -> AnalysisResult:
         if evidence.is_empty:

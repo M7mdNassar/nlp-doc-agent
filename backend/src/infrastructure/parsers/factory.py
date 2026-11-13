@@ -13,7 +13,6 @@ class ParserFactory:
             DOCXParser(),
             TXTParser(),
             MarkdownParser(),
-            DOCXParser(),
         ]
 
     def get_parser(self, file_type: str) -> DocumentParser:

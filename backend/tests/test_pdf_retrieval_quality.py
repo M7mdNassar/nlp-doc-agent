@@ -39,6 +39,15 @@ async def test_standalone_search_preserves_subject_without_model_call(question, 
     llm.generate.assert_not_awaited()
 
 
+async def test_failed_followup_rewrite_keeps_the_original_string_contract():
+    llm = SimpleNamespace(generate=AsyncMock(side_effect=ValueError("Invalid rewrite")))
+    result = await QueryRewriter(llm).rewrite(
+        "What tools did it use?", ["user: Explain the ETL pipeline."]
+    )
+    assert result == "What tools did it use?"
+    assert isinstance(result, str)
+
+
 async def test_paper_preserves_mechanism_spacing_sections_and_decoder_scope():
     path = Path(__file__).resolve().parents[2] / "attention.pdf"
     elements = await PDFParser().parse(path)
