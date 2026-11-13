@@ -1,7 +1,6 @@
 import json
 from dataclasses import asdict
 from enum import Enum
-from typing import Any
 
 import structlog
 

@@ -9,6 +9,8 @@ from src.domain.ports.reranker import Reranker
 from src.domain.ports.vector_store import VectorStore
 from src.domain.value_objects.sparse_vector import SparseVector
 
+from .context_selector import ContextSelector
+
 
 class RetrieverAgent:
     def __init__(self, embedder: Embedder, vector_store: VectorStore, reranker: Reranker):
@@ -16,6 +18,7 @@ class RetrieverAgent:
         self.vector_store = vector_store
         self.reranker = reranker
         self.sparse_model = SparseTextEmbedding(model_name="Qdrant/bm25")
+        self.context_selector = ContextSelector(max_chunks=5)
 
     async def retrieve(self, query: str, filters: dict[str, Any] | None = None) -> EvidencePackage:
         # 1. Embed Query (Dense)
