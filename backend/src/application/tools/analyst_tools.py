@@ -10,12 +10,13 @@ from src.domain.entities.analysis import StrictModel, ToolRequest, ToolResult
 from src.domain.entities.answer import EvidenceReference
 from src.domain.entities.chunk import Chunk
 from src.domain.entities.evidence import EvidencePackage
+from src.domain.value_objects.table_data import validate_table_data
 
 from .calculator import calculate
+from .numbers import validate_number
 from .statistics import summarize
 
-NUMBER = re.compile(r"[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+]?\d+)?")
-MAX_NUMBER = Decimal("1e18")
+NUMBER = re.compile(r"[-+\u2212]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][-+\u2212]?\d+)?")
 
 
 class NumberSource(StrictModel):
@@ -78,12 +79,18 @@ def normalized(text: str) -> str:
 
 def checked_number(value: str) -> Decimal:
     try:
-        number = Decimal(value.replace(",", "").strip().rstrip("%"))
+        number = Decimal(value.replace("\u2212", "-").replace(",", "").strip().rstrip("%"))
     except InvalidOperation as exc:
         raise ValueError("Invalid number") from exc
-    if not number.is_finite() or abs(number) > MAX_NUMBER:
-        raise ValueError("Number outside the supported range")
-    return number
+    return validate_number(number)
+
+
+def column_index(headers: list[str], name: str) -> int:
+    if name not in headers:
+        raise ValueError("Unknown table column")
+    if headers.count(name) != 1:
+        raise ValueError("The selected column name is ambiguous")
+    return headers.index(name)
 
 
 class AnalystTools:
@@ -102,11 +109,22 @@ class AnalystTools:
         chunk = self._chunk(chunk_id)
         # Do not accept e.g. "92" as a quote from the number "192".
         exact = normalized(quote)
+        if not exact:
+            raise ValueError("Tool input quote is empty")
         left = r"(?<![\w.])" if exact[0].isalnum() else ""
-        right = r"(?![\w.])" if exact[-1].isalnum() else ""
-        if not re.search(left + re.escape(exact) + right, normalized(chunk.text)):
-            raise ValueError("Tool input quote does not occur in the cited evidence")
-        return chunk
+        # A dot extends a numeric token only when another digit follows it.
+        right = r"(?!\w|\.\d)" if exact[-1].isalnum() else ""
+        text = normalized(chunk.text)
+        numeric_spans = [(m.start(), m.end()) for m in NUMBER.finditer(text)]
+        for match in re.finditer(left + re.escape(exact) + right, text):
+            # A source quote cannot start or end inside a signed/grouped/exponent
+            # token. In particular, "24" and "000" are not quotes of "24,000".
+            if not any(
+                start < match.start() < end or start < match.end() < end
+                for start, end in numeric_spans
+            ):
+                return chunk
+        raise ValueError("Tool input quote does not occur as complete source tokens")
 
     def _number(self, source: NumberSource) -> Decimal:
         self._quote(source.chunk_id, source.quote)
@@ -131,6 +149,7 @@ class AnalystTools:
             chunk = self._chunk(chunk_id)
             if not chunk.table_data:
                 raise ValueError("The selected chunk is not a structured table")
+            validate_table_data(chunk.table_data)
             return ToolResult("table_extractor", chunk.table_data, [chunk_id])
         if request.name == "document_comparison":
             return self._compare(ComparisonArguments.model_validate(request.arguments))
@@ -177,32 +196,7 @@ class AnalystTools:
         if args.table_chunk_id is not None:
             if sources:
                 raise ValueError("Choose either quoted values or a table column")
-            chunk = self._chunk(args.table_chunk_id)
-            if not chunk.table_data or not args.column:
-                raise ValueError("A structured table and column are required")
-            headers = chunk.table_data["headers"]
-            if args.column not in headers:
-                raise ValueError("Unknown table column")
-            if args.label_column is not None and args.label_column not in headers:
-                raise ValueError("Unknown table label column")
-            index = headers.index(args.column)
-            label_index = headers.index(args.label_column) if args.label_column in headers else None
-            for row in chunk.table_data["rows"]:
-                cell = str(row[index]).strip()
-                # Missing/non-numeric cells cannot silently change the statistical population.
-                if not re.fullmatch(
-                    r"[$\u20ac\u00a3]?\s*[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?%?", cell
-                ):
-                    raise ValueError(f"Non-numeric cell in selected column: {cell!r}")
-                raw = cell.lstrip("$\u20ac\u00a3").strip().rstrip("%")
-                sources.append(
-                    NumberSource(
-                        chunk_id=args.table_chunk_id,
-                        quote=cell,
-                        value=raw,
-                        label=str(row[label_index]) if label_index is not None else "",
-                    )
-                )
+            sources = self._table_sources(args)
         if not sources or len(sources) > 1000:
             raise ValueError("Data analysis requires between 1 and 1000 evidence values")
         values = [self._number(source) for source in sources]
@@ -219,3 +213,32 @@ class AnalystTools:
         return ToolResult(
             "data_analysis", output, list(dict.fromkeys(source.chunk_id for source in sources))
         )
+
+    def _table_sources(self, args: DataArguments) -> list[NumberSource]:
+        assert args.table_chunk_id is not None
+        chunk = self._chunk(args.table_chunk_id)
+        if not chunk.table_data or not args.column:
+            raise ValueError("A structured table and column are required")
+        validate_table_data(chunk.table_data)
+        if chunk.table_data.get("format") == "layout":
+            raise ValueError("Layout-only tables do not define numeric columns")
+        headers = chunk.table_data["headers"]
+        index = column_index(headers, args.column)
+        label_index = (
+            column_index(headers, args.label_column) if args.label_column is not None else None
+        )
+        sources = []
+        for row in chunk.table_data["rows"]:
+            cell = str(row[index]).strip()
+            # Missing/non-numeric cells cannot silently change the population.
+            if not re.fullmatch(r"[$\u20ac\u00a3]?\s*" + NUMBER.pattern + r"%?", cell):
+                raise ValueError(f"Non-numeric cell in selected column: {cell!r}")
+            sources.append(
+                NumberSource(
+                    chunk_id=args.table_chunk_id,
+                    quote=cell,
+                    value=cell.lstrip("$\u20ac\u00a3").strip().rstrip("%"),
+                    label=str(row[label_index]) if label_index is not None else "",
+                )
+            )
+        return sources

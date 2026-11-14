@@ -1,3 +1,4 @@
+from copy import deepcopy
 from pathlib import Path
 
 import structlog
@@ -39,20 +40,24 @@ class IngestionPipeline:
         doc = await self.doc_repo.get(doc_id)
         if not doc:
             raise ValueError(f"Document {doc_id} not found")
+        published = bool(await self.chunk_repo.get_by_document(doc_id))
+        working = deepcopy(doc)
         try:
             # Retrying/reindexing uses the same document ID.
-            doc.status = DocumentStatus.QUEUED
-            doc.error_message = None
-            doc.mark_parsing()
-            await self.doc_repo.save(doc)
+            working.status = DocumentStatus.QUEUED
+            working.error_message = None
+            working.mark_parsing()
+            if not published:
+                await self.doc_repo.save(working)
             parser = parser_factory.get_parser(doc.file_type)
             elements = clean_elements(await parser.parse(Path(file_path)))
             if not elements:
                 raise ValueError(
                     "No readable content found. Image-only PDFs require OCR before upload."
                 )
-            doc.mark_embedding(max(e.page for e in elements))
-            await self.doc_repo.save(doc)
+            working.mark_embedding(max(e.page for e in elements))
+            if not published:
+                await self.doc_repo.save(working)
             chunks = self.chunker.chunk(doc_id, elements)
             for chunk in chunks:
                 chunk.document_name = doc.name
@@ -64,15 +69,16 @@ class IngestionPipeline:
                 SparseVector(indices=e.indices.tolist(), values=e.values.tolist())
                 for e in sparse_embeddings
             ]
-            # Compute successfully before replacing old data. A failed replacement is retryable.
-            await self.vector_store.delete_by_document(str(doc_id))
-            await self.chunk_repo.delete_by_document(doc_id)
-            await self.chunk_repo.save_batch(chunks)
+            # Stage unique point IDs alongside the working index. Search admits only
+            # published SQL IDs, so a partial vector write is never visible.
             await self.vector_store.upsert(chunks, dense_vectors, sparse_vectors)
-            doc.mark_indexed()
-            await self.doc_repo.save(doc)
+            working.mark_indexed()
+            await self.chunk_repo.publish(working, chunks)
+            # Retired points stay hidden, including for readers already in flight.
+            # Explicit document deletion removes all points belonging to the document.
         except Exception as exc:
             logger.error("ingestion_failed", document_id=str(doc_id), error=str(exc))
-            doc.mark_failed(str(exc))
-            await self.doc_repo.save(doc)
+            if not published and await self.doc_repo.get(doc_id) is not None:
+                doc.mark_failed(str(exc))
+                await self.doc_repo.save(doc)
             raise

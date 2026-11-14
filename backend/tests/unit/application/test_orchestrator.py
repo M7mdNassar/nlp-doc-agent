@@ -6,6 +6,7 @@ import pytest
 
 from src.application.agents.orchestrator.orchestrator import Orchestrator
 from src.application.citations.verifier import CitationVerifier
+from src.core.errors import AppError
 from src.domain.entities.analysis import AnalysisResult
 from src.domain.entities.answer import AnswerBlock, AnswerDraft, EvidenceReference, GroundingVerdict
 from src.domain.entities.evidence import EvidencePackage
@@ -34,7 +35,10 @@ def make_orchestrator(sample_chunks, verdicts, batches=None):
         generate=AsyncMock(return_value=draft),
         review=AsyncMock(
             return_value=GroundingVerdict(
-                supported=[True], qualifications_preserved=[True], no_added_details=[True]
+                answers_question=True,
+                supported=[True],
+                qualifications_preserved=[True],
+                no_added_details=[True],
             )
         ),
     )
@@ -87,25 +91,35 @@ async def test_invalid_or_unsupported_drafts_fail_closed(sample_chunks, failure)
         draft.blocks[0].citations[0].quote = "This quote was invented."
     else:
         orchestrator.answer_agent.review.return_value = GroundingVerdict(
-            supported=[False], qualifications_preserved=[True], no_added_details=[True]
+            answers_question=True,
+            supported=[False],
+            qualifications_preserved=[True],
+            no_added_details=[True],
         )
-    result = await orchestrator.process("Accuracy?")
-    assert result["state"] == "insufficient_evidence"
-    assert result["sources"] == []
     if failure != "unsupported_claim":
+        with pytest.raises(AppError) as error:
+            await orchestrator.process("Accuracy?")
+        assert error.value.code == "ANSWER_OUTPUT_INVALID"
         orchestrator.answer_agent.review.assert_not_awaited()
+    else:
+        result = await orchestrator.process("Accuracy?")
+        assert result["state"] == "insufficient_evidence" and result["sources"] == []
 
 
 async def test_failed_qualification_review_gets_one_correction_with_same_evidence(sample_chunks):
     orchestrator = make_orchestrator(sample_chunks, [AnalysisResult(True, "")])
     rejected = GroundingVerdict(
+        answers_question=True,
         supported=[True],
         qualifications_preserved=[False],
         no_added_details=[True],
         feedback=["Block 1: retain the validation-set qualification."],
     )
     accepted = GroundingVerdict(
-        supported=[True], qualifications_preserved=[True], no_added_details=[True]
+        answers_question=True,
+        supported=[True],
+        qualifications_preserved=[True],
+        no_added_details=[True],
     )
     orchestrator.answer_agent.review.side_effect = [rejected, accepted]
     result = await orchestrator.process("Summarize the result")
@@ -123,18 +137,21 @@ async def test_second_correction_is_reviewed_before_returning_answer(sample_chun
     orchestrator = make_orchestrator(sample_chunks, [AnalysisResult(True, "")])
     orchestrator.answer_agent.review.side_effect = [
         GroundingVerdict(
+            answers_question=True,
             supported=[True],
             qualifications_preserved=[False],
             no_added_details=[True],
             feedback=["Block 1: retain the validation-set qualification."],
         ),
         GroundingVerdict(
+            answers_question=True,
             supported=[False],
             qualifications_preserved=[True],
             no_added_details=[False],
             feedback=["Block 1: remove the unsupported population description."],
         ),
         GroundingVerdict(
+            answers_question=True,
             supported=[True],
             qualifications_preserved=[True],
             no_added_details=[True],
@@ -152,7 +169,10 @@ async def test_second_correction_is_reviewed_before_returning_answer(sample_chun
 async def test_persistent_added_details_stop_after_three_drafts(sample_chunks):
     orchestrator = make_orchestrator(sample_chunks, [AnalysisResult(True, "")])
     orchestrator.answer_agent.review.return_value = GroundingVerdict(
-        supported=[True], qualifications_preserved=[True], no_added_details=[False]
+        answers_question=True,
+        supported=[True],
+        qualifications_preserved=[True],
+        no_added_details=[False],
     )
     result = await orchestrator.process("Summarize the result")
     assert result["state"] == "insufficient_evidence"

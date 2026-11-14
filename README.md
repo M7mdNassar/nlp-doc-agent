@@ -146,6 +146,12 @@ The migration service upgrades SQLite before the API and worker start. Initial
 startup can take longer while local models download and load. Health reports
 SQLite, Redis, and Qdrant connectivity; it does not validate LLM credentials or quota.
 
+When updating an existing installation, run the migration service with the new
+backend image before restarting the API and worker. The November 2026 QA fixes
+add an ingestion-claim table without rewriting existing records. Keep your
+existing data volumes; do not use `down -v`. The Qdrant client is constrained to
+`>=1.12,<1.14` for the Compose server version.
+
 If only the frontend needs to be added to an existing backend:
 
 ```sh
@@ -167,15 +173,32 @@ Standalone questions avoid an unnecessary LLM rewrite. Follow-ups use bounded
 conversation history to resolve context. The backend supports up to three
 retrieval rounds and three answer/review attempts. Invalid structured output has
 bounded correction attempts; source validation is not relaxed during correction.
+If another retrieval round returns the same selected chunks, the backend stops
+instead of asking the Analyst to evaluate identical evidence again.
 
 The Analyst decides whether evidence is sufficient and executes deterministic
 tools when needed. The Answer Agent selects source excerpt IDs; the backend
 copies their quotes verbatim. A separate review checks factual support, retained
 qualifications, and unsupported additions before an answer is accepted.
+The reviewer also receives the question and checks the requested metric, subject,
+comparison, constraints, and output format.
+
+Numeric tools preserve complete signed, grouped, and scientific-notation source
+numbers and use bounded Decimal arithmetic. Corrupt table grids and ambiguous
+selected column names are rejected. The permanent tool suite includes the
+adversarial cases from [the tool audit](TOOLS_AUDIT_2026-11-14.md).
+
+Reindexing keeps the current published document available while new chunks and
+vectors are prepared. New SQL chunks become visible together after vector staging
+succeeds; a failed replacement keeps the previous working index. One ingestion
+claim per document prevents concurrent reindex requests from queuing duplicates.
 
 Conversation messages are persisted in SQLite, while the browser stores the
 workspace's conversation list and UI state. Browser history is not synchronized
 between devices; the backend currently has no conversation-list endpoint.
+If simultaneous questions try to save the same conversation, one receives
+`CONVERSATION_CHANGED` (HTTP 409). Retrying loads the latest history rather than
+overwriting the other turn.
 
 ## Verified-answer caching
 
@@ -224,6 +247,14 @@ reuse the original grounding approval without a fresh LLM review. Consequently,
 an answer-cache hit makes **zero model-provider requests**. Provider-reported
 `cached_input_tokens` is a different mechanism and does not prove an answer hit.
 
+The backend also retains up to 128 exact query embeddings in process memory for
+the current model instance. A semantic-cache miss can reuse that vector during
+normal retrieval. This avoids duplicate local inference; it does not reuse an
+answer or skip verification, and it does not change the answer-cache badge.
+Changing the query text produces a separate embedding entry. The search component
+is warmed during startup and reused across requests; database sessions and
+conversation state remain specific to each request.
+
 Document additions, changes, deletions, and reindexing invalidate old scopes.
 Invalidated entries become unreachable and expire by TTL; they are not all erased
 immediately. Identical concurrent requests share a renewable Redis lease. If the
@@ -242,8 +273,15 @@ wait budget expires, `ANSWER_IN_PROGRESS` prevents a duplicate generation.
 
 Each logical model call tries the Groq primary, then `LLM_FALLBACK_MODELS`, then
 `OPENROUTER_FALLBACK_MODELS` when configured with a key. Rate limits and known
-cooldowns advance the chain. Authentication/configuration errors and invalid
-model output do not trigger switching providers.
+cooldowns advance the chain. A token-limit-truncated completion is discarded and
+can try a configured alternative. One bounded cooldown recovery may revisit
+earlier rate-limited models, without replaying the provider that truncated or
+increasing its token budget. A second truncation stops recovery. Authentication,
+configuration, refusal and other invalid-output errors do not switch providers.
+OpenRouter completion calls have a 60-second wall-clock limit, including response
+body waits. A timed-out call uses the same bounded alternative-model recovery
+instead of being replayed by the transport retry loop. The overall question
+deadline and grounding requirements still apply.
 
 Retrieved document excerpts and answer drafts are sent to the selected provider
 for analysis, generation, and review. Local embeddings and CUDA support do not
@@ -255,9 +293,24 @@ seconds shared across the question's planned waits; `0` disables that wait.
 Unknown resets, excessive delays, and repeated exhaustion surface as provider
 errors. A failed provider call is not presented as missing document evidence.
 
+`QUESTION_TIMEOUT_SECONDS` defaults to **180** (allowed range: 1–600) and bounds
+the question use case, including cache waits and provider work. Expiry returns
+`QUESTION_TIMEOUT` (HTTP 504). Incomplete/empty provider output returns
+`LLM_OUTPUT_INVALID`; malformed answer/review output returns
+`ANSWER_OUTPUT_INVALID` (HTTP 503). These are distinct from a valid negative
+evidence verdict. Incomplete output is not retried as a transport failure.
+
 `openrouter/free` selects an available free model; selection, quality and quotas
 can vary. Adding paid model IDs can incur charges. The same citation and grounding
 checks apply regardless of provider. See [provider and CUDA details](docs/gpu-and-model-fallback.md).
+
+Structured agent calls request JSON-object output from OpenRouter. For a stage
+budget of at least 1,024 tokens, the request allows up to that budget for reasoning
+and an equal amount of additional response headroom. The provider's total output
+ceiling is therefore twice the stage budget. Actual usage and the wire ceiling
+remain visible in diagnostics. Groq budgets and plain-text rewriting retain their
+existing behavior; truncated output is still rejected. This can increase the
+maximum tokens used by a fallback call while avoiding reasoning-only completions.
 
 Folio uses `POST /chat/stream`. Its SSE events carry real `progress`, followed by
 `result` or `error`. This streams activity, not unreviewed answer tokens. An HTTP
@@ -278,8 +331,13 @@ although a save that already completed cannot be undone by cancellation.
 | POST   | `/chat/stream`                | Stream processing activity and the final result/error |
 
 Chat accepts `message`, optional `conversation_id`, and optional `filters`.
-Filters support document IDs/name, page, chapter, section, author, date, and file
-type. Omit `conversation_id` for a fresh conversation.
+Filters support document IDs/name, `page`/`pages`, chapter, `section`/`sections`,
+author, date, and file type. For example, `{"pages":[2,3],"sections":["4","5"]}`
+searches either listed page and either listed section, intersected with the other
+filters. Natural questions also support numbered lists and bounded ranges such
+as "pages 2 and 3" or "sections 4–5". Lists/ranges are limited to 50 values;
+conflicting constraints and explicit empty lists never expand the search scope.
+Omit `conversation_id` for a fresh conversation.
 
 Example in PowerShell, after uploading and indexing `attention.pdf`:
 
@@ -382,8 +440,11 @@ orchestrator directly, so it does not exercise answer-cache lookup. See the
   a larger deployment should use transactional corpus revisions.
 - DOCX/TXT/Markdown citations use native block/line locations. The source drawer
   shows excerpts, not an original-document preview.
-- Document deletion removes database/index records; automatic removal of the
-  original uploaded file is not implemented.
+- Document deletion removes database/index records and attempts to remove the
+  uploaded file; a filesystem removal failure is logged.
+- Reindexing retains retired/staged vector points but excludes them from search
+  using the published SQL chunk IDs. Full document deletion removes its vectors;
+  automatic garbage collection of retired points is not implemented.
 - Provider/model availability and quotas can prevent completion despite fallback.
 
 See [cache design](docs/decisions/caching.md),

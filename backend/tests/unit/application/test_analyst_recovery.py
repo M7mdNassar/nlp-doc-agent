@@ -200,7 +200,10 @@ async def test_valid_insufficiency_still_retrieves_more_evidence(sample_chunks):
             ]
         )
     )
-    orchestrator = make_orchestrator(sample_chunks, [])
+    orchestrator = make_orchestrator(
+        sample_chunks, [],
+        [EvidencePackage(chunks=sample_chunks[:1]), EvidencePackage(chunks=sample_chunks[1:])],
+    )
     orchestrator.analyst = AnalystAgent(llm)
     result = await orchestrator.process("q")
     assert result["state"] == "answer_ready" and result["loops"] == 1

@@ -262,6 +262,7 @@ async def test_missing_support_retrieves_new_evidence_before_next_draft(sample_c
     )
     orchestrator.answer_agent.review.side_effect = [
         GroundingVerdict(
+            answers_question=True,
             supported=[False],
             qualifications_preserved=[True],
             no_added_details=[False],
@@ -269,7 +270,10 @@ async def test_missing_support_retrieves_new_evidence_before_next_draft(sample_c
             feedback=["Need the Model Y result."],
         ),
         GroundingVerdict(
-            supported=[True], qualifications_preserved=[True], no_added_details=[True]
+            answers_question=True,
+            supported=[True],
+            qualifications_preserved=[True],
+            no_added_details=[True],
         ),
     ]
     result = await orchestrator.process("Compare accuracy", {"doc_ids": ["doc_123456789"]})
@@ -301,6 +305,7 @@ async def test_exhausted_length_correction_is_an_output_error(sample_chunks):
 async def test_missing_support_stops_when_retrieval_adds_nothing(sample_chunks):
     orchestrator = make_orchestrator(sample_chunks, [AnalysisResult(True, "")])
     orchestrator.answer_agent.review.return_value = GroundingVerdict(
+        answers_question=True,
         supported=[False],
         qualifications_preserved=[True],
         no_added_details=[False],

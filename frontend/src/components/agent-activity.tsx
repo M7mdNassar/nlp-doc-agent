@@ -121,31 +121,37 @@ export function ActivityHistory({ steps }: { steps: ProgressStep[] }) {
 
 const toolLabels: Record<string, string> = {
   calculator: "Calculator",
-  table_extractor: "Table extraction",
+  table_extractor: "Table extractor",
   document_comparison: "Document comparison",
   data_analysis: "Data analysis",
 };
 
 export function ToolsUsed({ answer }: { answer: Answer }) {
-  const tools: ToolUsage[] =
-    answer.tools_used ??
-    Object.values(
-      answer.tool_results.reduce<Record<string, ToolUsage>>((items, result) => {
-        const tool = items[result.name] ?? {
-          name: result.name,
-          label: toolLabels[result.name] ?? result.name.replaceAll("_", " "),
-          agent: "analyst",
-          calls: 0,
-          completed: 0,
-          failed: 0,
-        };
-        tool.calls++;
-        tool.completed++;
-        items[result.name] = tool;
-        return items;
-      }, {}),
-    );
-  if (answer.tools_used === undefined && !tools.length) return null;
+  const results = answer.tool_results.filter((tool) =>
+    Object.hasOwn(toolLabels, tool.name),
+  );
+  const recordedTools = answer.tools_used?.filter(
+    (tool) => Object.hasOwn(toolLabels, tool.name) && tool.calls > 0,
+  );
+  const tools: ToolUsage[] = recordedTools?.length
+    ? recordedTools
+    : Object.values(
+        results.reduce<Record<string, ToolUsage>>((items, result) => {
+          const tool = items[result.name] ?? {
+            name: result.name,
+            label: toolLabels[result.name],
+            agent: "analyst",
+            calls: 0,
+            completed: 0,
+            failed: 0,
+          };
+          tool.calls++;
+          tool.completed++;
+          items[result.name] = tool;
+          return items;
+        }, {}),
+      );
+  if (!tools.length) return null;
   return (
     <section className="tools-used" aria-label="Tools used">
       <div className="tools-heading">
@@ -153,45 +159,39 @@ export function ToolsUsed({ answer }: { answer: Answer }) {
         <strong>Tools used</strong>
         <span>{tools.length}</span>
       </div>
-      {tools.length ? (
-        <ul>
-          {tools.map((tool) => (
-            <li key={tool.name}>
-              <span className="tool-used-icon">
-                <Wrench size={14} />
-              </span>
-              <div>
-                <strong>{tool.label}</strong>
-                <small>
-                  {agents.find((agent) => agent.id === tool.agent)?.label} ·{" "}
-                  {tool.calls} {tool.calls === 1 ? "call" : "calls"}
-                </small>
-              </div>
-              <span
-                className={
-                  tool.failed ? "tool-outcome has-failure" : "tool-outcome"
-                }
-              >
-                {tool.completed > 0 && <span>{tool.completed} completed</span>}
-                {tool.failed > 0 && <span>{tool.failed} failed</span>}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p>No tools were needed for this response.</p>
-      )}
-      {!!answer.tool_results.length && (
+      <ul>
+        {tools.map((tool) => (
+          <li key={tool.name}>
+            <span className="tool-used-icon">
+              <Wrench size={14} />
+            </span>
+            <div>
+              <strong>{toolLabels[tool.name]}</strong>
+              <small>
+                {agents.find((agent) => agent.id === tool.agent)?.label} ·{" "}
+                {tool.calls} {tool.calls === 1 ? "call" : "calls"}
+              </small>
+            </div>
+            <span
+              className={
+                tool.failed ? "tool-outcome has-failure" : "tool-outcome"
+              }
+            >
+              {tool.completed > 0 && <span>{tool.completed} completed</span>}
+              {tool.failed > 0 && <span>{tool.failed} failed</span>}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {!!results.length && (
         <details className="tool-details">
           <summary>
             View analysis results
             <ChevronDown size={14} />
           </summary>
-          {answer.tool_results.map((tool, index) => (
+          {results.map((tool, index) => (
             <div key={index}>
-              <strong>
-                {toolLabels[tool.name] ?? tool.name.replaceAll("_", " ")}
-              </strong>
+              <strong>{toolLabels[tool.name]}</strong>
               {tool.output.result !== undefined && (
                 <p>
                   Result:{" "}

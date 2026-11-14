@@ -60,6 +60,41 @@ function CacheStatus({ cache }: { cache: Answer["cache"] }) {
 }
 export function answerMarkdown(answer: Answer) {
   let text = answer.answer;
+  const tables = answer.tool_results.filter(
+    (tool) => tool.name === "table_extractor",
+  );
+  if (
+    tables.some(
+      ({ output }) =>
+        Array.isArray(output.headers) &&
+        output.headers.length > 1 &&
+        Array.isArray(output.rows) &&
+        output.rows.length > 0,
+    ) &&
+    !tables.some(({ output }) => output.format === "layout")
+  ) {
+    // Some models fence an otherwise valid Markdown grid. Unwrap only complete
+    // table blocks backed by structured extraction; keep code/layout text intact.
+    text = text.replace(
+      /(^|\n)(`{3,}|~{3,})[ \t]*(?:markdown|md)?[ \t]*\r?\n([\s\S]*?)\r?\n\2[ \t]*(?=\r?\n|$)/gi,
+      (original, newline: string, _fence: string, body: string) => {
+        const rows = body.trim().split(/\r?\n/);
+        const width = (row: string) =>
+          row
+            .trim()
+            .slice(1, -1)
+            .split(/(?<!\\)\|/).length;
+        const isTable =
+          rows.length >= 3 &&
+          /^\s*\|(?:[ \t]*:?-{3,}:?[ \t]*\|){2,}[ \t]*$/.test(rows[1]) &&
+          rows.every(
+            (row) =>
+              /^\s*\|.+\|[ \t]*$/.test(row) && width(row) === width(rows[0]),
+          );
+        return isTable ? newline + body : original;
+      },
+    );
+  }
   const footer = text.lastIndexOf("\n\nSources:\n");
   if (
     footer >= 0 &&

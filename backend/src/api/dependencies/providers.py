@@ -60,9 +60,16 @@ def get_reranker() -> "CrossEncoderAdapter":
 
 @lru_cache
 def get_vector_store() -> "QdrantAdapter":
+    from src.infrastructure.relational.published_chunks import published_chunk_ids
     from src.infrastructure.vector_store.qdrant_adapter import QdrantAdapter
 
-    return QdrantAdapter()
+    return QdrantAdapter(published_ids=published_chunk_ids)
+
+
+@lru_cache
+def get_retriever() -> RetrieverAgent:
+    # The retriever owns the expensive BM25 model, but no session or question state.
+    return RetrieverAgent(get_embedder(), get_vector_store(), get_reranker())
 
 
 @lru_cache
@@ -126,7 +133,7 @@ def get_ask_question_uc(session: DBSession) -> AskQuestionUseCase:
 
 def _build_ask_question_uc(session: AsyncSession) -> AskQuestionUseCase:
     rewriter = QueryRewriter(get_llm())
-    retriever = RetrieverAgent(get_embedder(), get_vector_store(), get_reranker())
+    retriever = get_retriever()
 
     # AnalystTools executes validated requests against each question's evidence.
     analyst = AnalystAgent(get_llm())

@@ -49,7 +49,9 @@ class Orchestrator:
             raise ValueError("At least one retrieval round is required")
         self.rewriter, self.retriever, self.analyst = rewriter, retriever, analyst
         self.answer_agent, self.verifier = answer_agent, verifier
-        self.selector = selector or ContextSelector(max_tokens=24000, max_chunks=16, per_document=12)
+        self.selector = selector or ContextSelector(
+            max_tokens=24000, max_chunks=16, per_document=12
+        )
         self.max_rounds = max_rounds
 
     async def process(
@@ -80,7 +82,12 @@ class Orchestrator:
         round_index = 0
         for attempt in range(self.max_rounds):
             round_index = attempt
+            previous_ids = {c.id for c in evidence.chunks}
             evidence = await self._retrieve(current_query, filters, evidence, attempt + 1)
+            if attempt and {c.id for c in evidence.chunks} == previous_ids:
+                # The prior validated verdict already evaluated these exact published
+                # chunks. A differently worded search did not supply a missing fact.
+                break
             with stage("analysis", retrieval_round=attempt + 1) as metrics:
                 analysis = await self.analyst.analyze(answer_question, evidence)
                 metrics["has_enough_evidence"] = analysis.has_enough_evidence
@@ -124,7 +131,9 @@ class Orchestrator:
                 with stage("citation_validation"):
                     self.verifier.validate(draft, evidence)
                 with stage("answer_verification", answer_attempt=answer_attempt + 1) as metrics:
-                    review = await self.answer_agent.review(draft, evidence, analysis)
+                    review = await self.answer_agent.review(
+                        draft, evidence, analysis, question=question
+                    )
                     metrics["accepted"] = review.accepts(len(draft.blocks))
                 if review.accepts(len(draft.blocks)):
                     result["answer"], result["sources"] = self.verifier.format(draft, evidence)
@@ -173,6 +182,12 @@ class Orchestrator:
             raise AppError("ANSWER_OUTPUT_INVALID", str(exc), 503) from exc
         except ValueError as exc:
             logger.warning("answer_rejected", error_type=type(exc).__name__)
+            raise AppError(
+                "ANSWER_OUTPUT_INVALID",
+                "The model could not produce a valid verified answer. Please retry. "
+                "Your documents are still available.",
+                503,
+            ) from exc
         return result
 
     async def _retrieve(

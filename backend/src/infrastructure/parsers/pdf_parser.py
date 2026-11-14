@@ -69,8 +69,14 @@ def outside_tables(obj: dict[str, Any], boxes: list[tuple[float, float, float, f
 
 def attach_caption(lines: list[str], text: str, data: dict[str, Any]) -> tuple[list[str], str]:
     """Keep nearby captions with table data during indexing."""
-    start = next((i for i in range(len(lines) - 1, max(-1, len(lines) - 7), -1)
-                  if re.match(r"Table\s+\d+[.:\s]", lines[i], re.I)), None)
+    start = next(
+        (
+            i
+            for i in range(len(lines) - 1, max(-1, len(lines) - 7), -1)
+            if re.match(r"Table\s+\d+[.:\s]", lines[i], re.I)
+        ),
+        None,
+    )
     if start is not None:
         caption = "\n".join(lines[start:])
         if len(caption) < 1000:
@@ -116,7 +122,7 @@ def page_elements(
             lines, text = attach_caption(lines, text, data)
         heading = bool(
             re.match(r"(?:chapter|section)\s+\w", text, re.I)
-            or re.fullmatch(r"\d+(?:\.\d+)*\s+[A-Z][^.!?\n]{1,120}", text.strip())
+            or re.fullmatch(r"\d+(?:\.\d+)*\.?\s+[A-Z][^.!?\n]{1,120}", text.strip())
         )
         if (heading or data is not None) and lines:
             elements.append(

@@ -53,6 +53,7 @@ async def test_capture_keeps_exact_review_evidence_and_feedback_without_extra_ca
             {
                 "supported": [False],
                 "qualifications_preserved": [True],
+                "answers_question": True,
                 "no_added_details": [False],
                 "feedback": ["Block 1: PRIVATE_UNSUPPORTED is absent from the cited quote."],
             }
@@ -61,7 +62,7 @@ async def test_capture_keeps_exact_review_evidence_and_feedback_without_extra_ca
             {"blocks": [{"text": sample_chunks[0].text, "citations": [{"quote_id": "quote_1"}]}]}
         ),
         json.dumps(
-            {"supported": [True], "qualifications_preserved": [True], "no_added_details": [True]}
+            {"answers_question": True, "supported": [True], "qualifications_preserved": [True], "no_added_details": [True]}
         ),
     ]
     adapter, create, _ = adapter_with(monkeypatch, [completion(content=r) for r in replies])

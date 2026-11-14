@@ -7,6 +7,7 @@ from ..exceptions.domain_error import DomainError
 class TokenBudget:
     max_tokens: int
     used_tokens: int = 0
+    json_output: bool = False
 
     def __post_init__(self) -> None:
         if self.max_tokens <= 0:

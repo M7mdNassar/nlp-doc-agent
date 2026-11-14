@@ -27,11 +27,16 @@ const answer: Answer = {
   conversation_id: "conv_browser_test",
 };
 
-for (const [status, label] of [
-  ["miss", "Cache miss"],
-  ["exact_hit", "Cache hit · Exact"],
-  ["semantic_hit", "Cache hit · Semantic"],
-  ["bypass", "Cache bypassed"],
+for (const [status, label, toolName, toolLabel] of [
+  ["miss", "Cache miss", null, null],
+  ["exact_hit", "Cache hit · Exact", "table_extractor", "Table extractor"],
+  [
+    "semantic_hit",
+    "Cache hit · Semantic",
+    "document_comparison",
+    "Document comparison",
+  ],
+  ["bypass", "Cache bypassed", "data_analysis", "Data analysis"],
 ] as const) {
   test(`shows and persists ${status} with cached sources`, async ({ page }) => {
     const api = await mockApi(page);
@@ -42,6 +47,25 @@ for (const [status, label] of [
         age_seconds: 4,
         similarity: status === "semantic_hit" ? 0.99 : null,
       },
+      tools_used: [
+        {
+          name: "answer_cache",
+          label: "Checking saved verified answers",
+          agent: "retriever",
+          calls: 1,
+          completed: 1,
+          failed: 0,
+        },
+      ],
+      tool_results: toolName
+        ? [
+            {
+              name: toolName,
+              output: { result: 4 },
+              chunk_ids: [source.chunk_id],
+            },
+          ]
+        : [],
     });
     await page.goto("/");
     await page
@@ -49,9 +73,19 @@ for (const [status, label] of [
       .fill("Explain the result.");
     await page.getByRole("button", { name: "Send message" }).click();
     await expect(page.getByText(label, { exact: true })).toBeVisible();
+    const tools = page.getByRole("region", { name: "Tools used" });
+    if (toolLabel) {
+      await expect(tools).toContainText(toolLabel);
+      await expect(tools.locator("li")).toHaveCount(1);
+      await expect(tools).not.toContainText("Checking saved verified answers");
+    } else {
+      await expect(tools).toHaveCount(0);
+    }
     await page.reload();
     await expect(page.getByText(label, { exact: true })).toBeVisible();
     await expect(page.getByText("Research report.pdf").first()).toBeVisible();
+    if (toolLabel) await expect(tools).toContainText(toolLabel);
+    else await expect(tools).toHaveCount(0);
   });
 }
 
@@ -290,12 +324,31 @@ test("agent flow follows live events, repeats retrieval, and saves tools after c
         completed: 1,
         failed: 0,
       },
+      ...[
+        "answer_cache",
+        "hybrid_search",
+        "reranker",
+        "citation_validator",
+        "toString",
+      ].map((name) => ({
+        name,
+        label: `Internal ${name}`,
+        agent: "retriever" as const,
+        calls: 1,
+        completed: 1,
+        failed: 0,
+      })),
     ],
     tool_results: [
       {
         name: "calculator",
         output: { result: 4 },
         chunk_ids: [source.chunk_id],
+      },
+      {
+        name: "hybrid_search",
+        output: { result: "Internal search output" },
+        chunk_ids: [],
       },
     ],
   };
@@ -308,8 +361,13 @@ test("agent flow follows live events, repeats retrieval, and saves tools after c
   await expect(page.getByRole("region", { name: "Tools used" })).toContainText(
     "Calculator",
   );
+  await expect(page.locator(".tools-used li")).toHaveCount(1);
+  await expect(page.locator(".tools-used")).not.toContainText("Internal");
   await page.getByText("View analysis results", { exact: true }).click();
   await expect(page.locator(".tool-details")).toContainText("Result: 4");
+  await expect(page.locator(".tool-details")).not.toContainText(
+    "Internal search output",
+  );
   await page.screenshot({ path: testInfo.outputPath("tools-used-mobile.png") });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.screenshot({
@@ -319,9 +377,136 @@ test("agent flow follows live events, repeats retrieval, and saves tools after c
   await expect(page.getByRole("region", { name: "Tools used" })).toContainText(
     "Calculator",
   );
+  await expect(page.locator(".tools-used li")).toHaveCount(1);
   await page.getByText("Agent activity", { exact: false }).click();
   await expect(page.locator(".activity-history li")).toHaveCount(6);
 });
+
+const extractedTable = {
+  headers: ["Measure", "Observed value", "Measurement method"],
+  rows: [
+    [
+      "Median latency",
+      "18.6 ms",
+      "Single-example inference; 1,000 warm requests",
+    ],
+    ["P95 latency", "31.4 ms", "95th percentile of request latency"],
+    ["Throughput", "412", "Examples/second; batch size 32"],
+    ["Peak GPU memory", "1.42 GB", "Maximum allocated during inference"],
+    ["Model artifact size", "110 MB", "Serialized model + tokenizer"],
+    [
+      "CPU-only median latency",
+      "74.2 ms",
+      "Single-example inference on 4 vCPU host",
+    ],
+  ],
+};
+const extractedMarkdown = [
+  extractedTable.headers,
+  ["---", "---", "---"],
+  ...extractedTable.rows,
+]
+  .map((row) => `| ${row.join(" | ")} |`)
+  .join("\n");
+
+for (const fence of ["markdown", "md", "", "unfenced"]) {
+  test(`renders the extracted table as cells with ${fence || "unlabelled"} output`, async ({
+    page,
+  }, testInfo) => {
+    const api = await mockApi(page);
+    const body =
+      fence === "unfenced"
+        ? extractedMarkdown
+        : `\`\`\`${fence}\n${extractedMarkdown}\n\`\`\``;
+    api.setChat({
+      ...answer,
+      answer: body + "\n\n[Research report.pdf, p. 4]",
+      tool_results: [
+        {
+          name: "table_extractor",
+          output: extractedTable,
+          chunk_ids: [source.chunk_id],
+        },
+      ],
+    });
+    await page.goto("/");
+    await page
+      .getByRole("textbox", { name: "Ask a question about your documents" })
+      .fill("Extract the complete operational-performance table.");
+    await page.getByRole("button", { name: "Send message" }).click();
+    const table = page.locator(".prose table");
+    await expect(table.locator("thead th")).toHaveText(extractedTable.headers);
+    await expect(table.locator("tbody tr")).toHaveCount(6);
+    for (let index = 0; index < extractedTable.rows.length; index++) {
+      await expect(
+        table.locator("tbody tr").nth(index).locator("td"),
+      ).toHaveText(extractedTable.rows[index]);
+    }
+    await expect(page.locator(".prose pre")).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "Tools used" }),
+    ).toContainText("Table extractor");
+    await expect(page.locator(".inline-citation")).toHaveCount(1);
+    if (fence === "markdown") {
+      await page.screenshot({
+        path: testInfo.outputPath("extracted-table-desktop.png"),
+      });
+      await page.setViewportSize({ width: 390, height: 844 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: testInfo.outputPath("extracted-table-mobile.png"),
+      });
+    }
+    await page.reload();
+    await expect(table.locator("tbody tr")).toHaveCount(6);
+  });
+}
+
+for (const kind of [
+  "layout",
+  "without-tool",
+  "python",
+  "mixed-prose",
+  "malformed-row",
+]) {
+  test(`preserves literal ${kind} code rather than inventing a grid`, async ({
+    page,
+  }) => {
+    const api = await mockApi(page);
+    let body = extractedMarkdown;
+    if (kind === "mixed-prose")
+      body += "\nThis is explanatory text, not a table row.";
+    if (kind === "malformed-row") body += "\n| missing cells |";
+    api.setChat({
+      ...answer,
+      answer: `\`\`\`${kind === "python" ? "python" : "markdown"}\n${body}\n\`\`\``,
+      tool_results:
+        kind === "without-tool"
+          ? []
+          : [
+              {
+                name: "table_extractor",
+                output:
+                  kind === "layout"
+                    ? { format: "layout", text: body, headers: [], rows: [] }
+                    : extractedTable,
+                chunk_ids: [source.chunk_id],
+              },
+            ],
+    });
+    await page.goto("/");
+    await page
+      .getByRole("textbox", { name: "Ask a question about your documents" })
+      .fill("Show the original layout or code.");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect(page.locator(".prose pre")).toContainText(body);
+    await expect(page.locator(".prose table")).toHaveCount(0);
+  });
+}
 
 test("empty workspace uploads, polls processing, and makes the source available", async ({
   page,
@@ -602,6 +787,7 @@ test("backend outage is recoverable", async ({ page }) => {
 test("light and dark workspace and dialogs meet automated accessibility checks", async ({
   page,
 }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await mockApi(page);
   await page.goto("/");
   await expect(
@@ -615,6 +801,7 @@ test("light and dark workspace and dialogs meet automated accessibility checks",
     ).violations,
   ).toEqual([]);
   await page.getByRole("button", { name: "Switch to dark theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   expect(
     (
       await new AxeBuilder({ page })
@@ -634,6 +821,25 @@ test("light and dark workspace and dialogs meet automated accessibility checks",
   ).toEqual([]);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
+});
+
+test("workspace IDs remain available when randomUUID is absent", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Crypto.prototype, "randomUUID", {
+      configurable: true,
+      value: undefined,
+    });
+  });
+  await mockApi(page);
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Connected", exact: true })).toBeVisible();
+  const id = await page.evaluate(() => {
+    const state = JSON.parse(localStorage.getItem("folio.workspace.v1")!);
+    return state.conversations[0].id as string;
+  });
+  expect(id).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Connected", exact: true })).toBeVisible();
 });
 
 test("mobile layout has no horizontal overflow and supports navigation", async ({

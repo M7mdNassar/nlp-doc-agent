@@ -28,6 +28,9 @@ class DocumentModel(Base):
         back_populates="document", cascade="all, delete-orphan"
     )
     jobs: Mapped[list["JobModel"]] = relationship(cascade="all, delete-orphan")
+    ingestion_claim: Mapped["IngestionClaimModel | None"] = relationship(
+        cascade="all, delete-orphan"
+    )
 
 
 class ChunkModel(Base):
@@ -42,6 +45,15 @@ class ChunkModel(Base):
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}")
 
     document: Mapped["DocumentModel"] = relationship(back_populates="chunks")
+
+
+class IngestionClaimModel(Base):
+    __tablename__ = "ingestion_claims"
+
+    document_id: Mapped[str] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
+    )
+    job_id: Mapped[str] = mapped_column(String, nullable=False, unique=True)
 
 
 class JobModel(Base):

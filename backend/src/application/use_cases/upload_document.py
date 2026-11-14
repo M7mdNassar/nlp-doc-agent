@@ -81,14 +81,12 @@ class UploadDocumentUseCase:
         path = self._path(doc)
         if not path.is_file():
             raise NotFoundError("Uploaded file", str(doc_id))
-        doc.status = DocumentStatus.QUEUED
-        doc.error_message = None
-        await self.doc_repo.save(doc)
         return doc, await self._enqueue(doc, path)
 
     async def _enqueue(self, doc: Document, path: Path) -> Job:
         job = Job(job_id=str(uuid.uuid4()), document_id=doc.id)
-        await self.job_repo.save(job)
+        if not await self.job_repo.claim(job):
+            raise ValidationError("This document already has an active ingestion job.")
         try:
             celery_app.send_task(
                 "ingest_document", args=[str(doc.id), str(path), job.job_id], task_id=job.job_id
@@ -96,8 +94,12 @@ class UploadDocumentUseCase:
         except Exception as exc:
             job.status = JobStatus.FAILED
             job.error = "Could not enqueue ingestion. Check Redis and retry reindexing."
-            doc.mark_failed(job.error)
+            if doc.status != DocumentStatus.INDEXED:
+                doc.mark_failed(job.error)
+            else:
+                doc.error_message = job.error
             await self.job_repo.save(job)
-            await self.doc_repo.save(doc)
+            if await self.doc_repo.get(doc.id) is not None:
+                await self.doc_repo.save(doc)
             raise AppError("QUEUE_UNAVAILABLE", job.error, 503) from exc
         return job

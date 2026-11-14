@@ -1,7 +1,10 @@
+import asyncio
+
 from src.application.agents.orchestrator.orchestrator import Orchestrator
 from src.application.agents.retriever.metadata_filter import MetadataFilterResolver
 from src.application.answer_cache import AnswerCache
-from src.core.errors import NotFoundError
+from src.core.config import settings
+from src.core.errors import AppError, NotFoundError
 from src.core.observability import stage
 from src.domain.entities.answer import ChatResult
 from src.domain.entities.conversation import Conversation
@@ -30,6 +33,22 @@ class AskQuestionUseCase:
         conversation_id: str | None = None,
         filters: MetadataFilters | None = None,
     ) -> ChatResult:
+        try:
+            async with asyncio.timeout(settings.QUESTION_TIMEOUT_SECONDS):
+                return await self._execute(question, conversation_id, filters)
+        except TimeoutError as exc:
+            raise AppError(
+                "QUESTION_TIMEOUT",
+                "The question took too long. Please retry. Your documents are still available.",
+                504,
+            ) from exc
+
+    async def _execute(
+        self,
+        question: str,
+        conversation_id: str | None,
+        filters: MetadataFilters | None,
+    ) -> ChatResult:
         if conversation_id:
             with stage("conversation_load"):
                 existing = await self.conversations.get(conversation_id)
@@ -44,11 +63,22 @@ class AskQuestionUseCase:
         with stage("document_lookup") as metrics:
             documents = await self.documents.list_all()
             metrics["document_count"] = len(documents)
-        resolved = self.filter_resolver.resolve(question, documents, filters)
+        # Contextual inference happens after rewriting, against the original hard
+        # selection. History is already part of exact-cache identity.
+        resolved = (
+            (filters or MetadataFilters())
+            if history
+            else self.filter_resolver.resolve(question, documents, filters)
+        )
         resolved_filters = resolved.model_dump(exclude_none=True)
 
         async def generate() -> ChatResult:
-            return await self.orchestrator.process(question, resolved_filters, history, documents)
+            return await self.orchestrator.process(
+                question,
+                (filters or MetadataFilters()).model_dump(exclude_none=True),
+                history,
+                documents,
+            )
 
         if self.answer_cache:
             result = await self.answer_cache.run(question, resolved_filters, history, generate)

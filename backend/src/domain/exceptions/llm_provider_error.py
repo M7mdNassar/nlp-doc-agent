@@ -16,6 +16,25 @@ class LLMRateLimitError(LLMProviderError):
         )
 
 
+class LLMOutputError(LLMProviderError):
+    """The provider returned an incomplete/empty completion, not an evidence verdict."""
+
+    def __init__(self, provider: str, *, finish_reason: str | None = None) -> None:
+        self.finish_reason = finish_reason
+        super().__init__(
+            provider,
+            "The AI model returned incomplete output. Please retry. "
+            "Your documents are still available.",
+        )
+
+
+class LLMTimeoutError(LLMProviderError):
+    """A complete provider response did not arrive within its wall-clock limit."""
+
+    def __init__(self, provider: str) -> None:
+        super().__init__(provider, f"{provider} did not complete its response in time.")
+
+
 class LLMCooldownError(LLMRateLimitError):
     """A known rate limit blocked a local call before a provider request was sent."""
 

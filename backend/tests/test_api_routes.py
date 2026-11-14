@@ -99,7 +99,8 @@ async def test_stream_route_preserves_question_scope_and_completed_result(api, c
     assert frames[0]["type"] == "progress"
     answer = frames[-1]["result"]
     assert answer["question_id"] == response.headers["x-question-id"]
-    assert answer["tools_used"][0]["name"] == "hybrid_search"
+    assert answer["tools_used"] == []
+    assert any(step["tool"] == "hybrid_search" for step in answer["activity"])
     assert answer["usage"]["stages"][0]["stage"] == "vector_search"
     assert current_trace() is None
 

@@ -1,8 +1,17 @@
-from decimal import Decimal
+from decimal import Decimal, Underflow, localcontext
 from typing import Any
 
 
 def summarize(operation: str, values: list[Decimal], labels: list[dict[str, str]]) -> Any:
+    try:
+        with localcontext() as context:
+            context.traps[Underflow] = True
+            return _summarize(operation, values, labels)
+    except ArithmeticError as exc:
+        raise ValueError("Statistics are outside the supported arithmetic range") from exc
+
+
+def _summarize(operation: str, values: list[Decimal], labels: list[dict[str, str]]) -> Any:
     mean = sum(values, Decimal(0)) / len(values)
     ordered = sorted(values)
     mid = len(values) // 2

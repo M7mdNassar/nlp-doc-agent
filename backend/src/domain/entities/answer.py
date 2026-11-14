@@ -34,6 +34,7 @@ class ExcerptAnswerDraft(StrictModel):
 
 
 class GroundingVerdict(StrictModel):
+    answers_question: bool
     supported: list[bool] = Field(min_length=1, max_length=12)
     qualifications_preserved: list[bool] = Field(min_length=1, max_length=12)
     no_added_details: list[bool] = Field(min_length=1, max_length=12)
@@ -41,9 +42,13 @@ class GroundingVerdict(StrictModel):
     missing_info: str = Field(default="", max_length=1000)
 
     def accepts(self, block_count: int) -> bool:
-        return not self.missing_info and all(
-            len(checks) == block_count and all(checks)
-            for checks in (self.supported, self.qualifications_preserved, self.no_added_details)
+        return (
+            self.answers_question
+            and not self.missing_info
+            and all(
+                len(checks) == block_count and all(checks)
+                for checks in (self.supported, self.qualifications_preserved, self.no_added_details)
+            )
         )
 
 

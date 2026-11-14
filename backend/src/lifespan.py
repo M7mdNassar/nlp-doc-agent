@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
+from src.core.observability import stage
+
 logger = structlog.get_logger(__name__)
 
 
@@ -18,6 +20,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
         embedding_loader.load()
         reranker_loader.load()
+        from src.api.dependencies.providers import get_retriever
+
+        with stage("retriever_warmup"):
+            get_retriever()
         logger.info("ML models loaded successfully.")
     except ImportError:
         logger.warning(

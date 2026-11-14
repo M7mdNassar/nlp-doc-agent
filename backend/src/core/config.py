@@ -21,10 +21,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="info")
     DATA_DIR: str = Field(default="/app/data")
     MAX_UPLOAD_BYTES: int = Field(default=50 * 1024 * 1024, gt=0)
+    QUESTION_TIMEOUT_SECONDS: float = Field(default=180, ge=1, le=600)
     ANSWER_CACHE_ENABLED: bool = True
     ANSWER_CACHE_SEMANTIC_ENABLED: bool = True
     ANSWER_CACHE_TTL_SECONDS: int = Field(default=86400, ge=1)
-    ANSWER_CACHE_SIMILARITY_THRESHOLD: float = Field(default=.94, ge=.9, le=1)
+    ANSWER_CACHE_SIMILARITY_THRESHOLD: float = Field(default=0.94, ge=0.9, le=1)
     ANSWER_CACHE_WAIT_SECONDS: float = Field(default=300, ge=0, le=600)
     ANSWER_CACHE_VERSION: str = "1"
     LLM_MODEL: str = Field(default="openai/gpt-oss-120b")

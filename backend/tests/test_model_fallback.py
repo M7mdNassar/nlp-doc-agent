@@ -6,7 +6,12 @@ import pytest
 from groq import AuthenticationError
 
 from src.core.observability import question_scope, stage
-from src.domain.exceptions.llm_provider_error import LLMConfigurationError, LLMRateLimitError
+from src.domain.exceptions.llm_provider_error import (
+    LLMConfigurationError,
+    LLMOutputError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+)
 from src.domain.value_objects.token_budget import TokenBudget
 from src.infrastructure.llm import groq_adapter, retry, router
 from tests.test_llm_provider_errors import rate_error
@@ -187,11 +192,115 @@ async def test_authentication_failure_does_not_try_other_models(monkeypatch):
     sleep.assert_not_awaited()
 
 
-async def test_invalid_completions_are_not_treated_as_rate_limits(monkeypatch):
+async def test_repeated_truncation_stops_after_one_alternative(monkeypatch):
     llm, create, _ = setup_router(monkeypatch, [completion(finish="length")] * 3)
-    with pytest.raises(ValueError, match="incomplete"):
+    with pytest.raises(LLMOutputError, match="incomplete") as error:
         await llm.generate("q", "s", TokenBudget(100))
-    assert [c.kwargs["model"] for c in create.await_args_list] == [MODELS[0]] * 3
+    assert error.value.finish_reason == "length"
+    assert [c.kwargs["model"] for c in create.await_args_list] == MODELS[:2]
+
+
+async def test_truncation_uses_complete_alternative_without_increasing_budget(monkeypatch):
+    llm, create, sleep = setup_router(
+        monkeypatch, [completion(finish="length"), completion()]
+    )
+    with question_scope() as trace:
+        assert await llm.generate("q", "s", TokenBudget(100)) == "ok"
+    assert [c.kwargs["model"] for c in create.await_args_list] == MODELS[:2]
+    assert all(c.kwargs["max_tokens"] == 100 for c in create.await_args_list)
+    assert trace.summary()["llm_calls"] == 1
+    assert trace.summary()["provider_requests"] == 2
+    assert trace.requests[0].finish_reason == "length"
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize("finish", ["stop", "content_filter", "error", None])
+async def test_other_invalid_outputs_do_not_switch_models(monkeypatch, finish):
+    response = completion(finish=finish)
+    response.choices[0].message.content = ""
+    llm, create, sleep = setup_router(monkeypatch, [response])
+    with pytest.raises(LLMOutputError):
+        await llm.generate("q", "s", TokenBudget(100))
+    create.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+async def test_single_truncated_provider_is_not_blindly_replayed(monkeypatch):
+    llm, create, sleep = setup_router(monkeypatch, [completion(finish="length")])
+    llm.providers = llm.providers[:1]
+    with pytest.raises(LLMOutputError):
+        await llm.generate("q", "s", TokenBudget(100))
+    create.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.parametrize("elapsed,expected_wait", [(37, None), (3, 5)])
+@pytest.mark.parametrize("failure_kind", ["length", "timeout"])
+async def test_slow_truncated_fallback_can_recover_earlier_limited_model(
+    monkeypatch, elapsed, expected_wait, failure_kind
+):
+    llm, create, sleep = setup_router(monkeypatch, [rate_error("8"), completion()])
+    monkeypatch.setattr(router.settings, "LLM_FALLBACK_MAX_WAIT_SECONDS", 60)
+    clock = [100.0]
+    timer = SimpleNamespace(monotonic=lambda: clock[0])
+    monkeypatch.setattr(groq_adapter, "time", timer)
+    monkeypatch.setattr(router, "time", timer)
+    sleep.side_effect = lambda delay: clock.__setitem__(0, clock[0] + delay)
+
+    async def truncated(*args):
+        clock[0] += elapsed
+        if failure_kind == "timeout":
+            raise LLMTimeoutError("OpenRouter")
+        raise LLMOutputError("OpenRouter", finish_reason="length")
+
+    fallback = SimpleNamespace(model="openrouter/free", generate_for_router=AsyncMock(side_effect=truncated))
+    llm.providers = llm.providers[:1] + [fallback]
+    with question_scope() as trace:
+        assert await llm.generate("q", "s", TokenBudget(3000, json_output=True)) == "ok"
+    assert create.await_count == 2
+    assert all(c.kwargs["model"] == MODELS[0] for c in create.await_args_list)
+    fallback.generate_for_router.assert_awaited_once()
+    assert trace.summary()["llm_calls"] == 1
+    if expected_wait is None:
+        sleep.assert_not_awaited()
+    else:
+        sleep.assert_awaited_once_with(expected_wait)
+
+
+@pytest.mark.parametrize("reset,wait_budget", [("8", 0), (None, 60)])
+async def test_truncated_recovery_respects_unknown_resets_and_wait_budget(
+    monkeypatch, reset, wait_budget
+):
+    llm, create, sleep = setup_router(monkeypatch, [rate_error(reset)])
+    monkeypatch.setattr(router.settings, "LLM_FALLBACK_MAX_WAIT_SECONDS", wait_budget)
+    fallback = SimpleNamespace(
+        model="openrouter/free",
+        generate_for_router=AsyncMock(
+            side_effect=LLMOutputError("OpenRouter", finish_reason="length")
+        ),
+    )
+    llm.providers = llm.providers[:1] + [fallback]
+    with pytest.raises(LLMOutputError):
+        await llm.generate("q", "s", TokenBudget(3000, json_output=True))
+    create.assert_awaited_once()
+    fallback.generate_for_router.assert_awaited_once()
+    sleep.assert_not_awaited()
+
+
+async def test_repeated_provider_timeouts_stop_after_one_alternative(monkeypatch):
+    llm, _, sleep = setup_router(monkeypatch, [])
+    providers = [
+        SimpleNamespace(
+            model=f"test-{index}",
+            generate_for_router=AsyncMock(side_effect=LLMTimeoutError("test")),
+        )
+        for index in range(3)
+    ]
+    llm.providers = providers
+    with pytest.raises(LLMTimeoutError):
+        await llm.generate("q", "s", TokenBudget(100))
+    assert [p.generate_for_router.await_count for p in providers] == [1, 1, 0]
+    sleep.assert_not_awaited()
 
 
 async def test_config_deduplicates_models_and_can_disable_fallback(monkeypatch):

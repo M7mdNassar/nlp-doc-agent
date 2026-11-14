@@ -1,5 +1,6 @@
 """OpenRouter fallback with safe diagnostics and no hidden SDK retries."""
 
+import asyncio
 import json
 import math
 import time
@@ -13,8 +14,10 @@ from src.core.observability import ProviderRequest, provider_request
 from src.domain.exceptions.llm_provider_error import (
     LLMConfigurationError,
     LLMCooldownError,
+    LLMOutputError,
     LLMProviderError,
     LLMRateLimitError,
+    LLMTimeoutError,
 )
 from src.domain.value_objects.token_budget import TokenBudget
 
@@ -22,6 +25,7 @@ from .retry import async_retry
 from .usage import record_response
 
 URL = "https://openrouter.ai/api/v1/chat/completions"
+GENERATION_TIMEOUT_SECONDS = 60
 
 
 class OpenRouterAdapter:
@@ -51,7 +55,7 @@ class OpenRouterAdapter:
         return LLMProviderError("OpenRouter")
 
     def _payload(self, prompt: str, system: str, budget: TokenBudget) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system},
@@ -60,8 +64,19 @@ class OpenRouterAdapter:
             "temperature": 0.1,
             "max_tokens": budget.remaining,
         }
+        if budget.json_output:
+            payload["response_format"] = {"type": "json_object"}
+            if budget.remaining >= 1024:
+                # OpenRouter counts thinking and the JSON response in the same
+                # limit. Keep the old thinking allowance and reserve as much
+                # room for the actual response; never disable review/reasoning.
+                payload["reasoning"] = {"max_tokens": budget.remaining}
+                payload["max_tokens"] = budget.remaining * 2
+        return payload
 
-    def _record_data(self, record: ProviderRequest, data: dict[str, Any], headers: httpx.Headers) -> None:
+    def _record_data(
+        self, record: ProviderRequest, data: dict[str, Any], headers: httpx.Headers
+    ) -> None:
         if data.get("error"):
             code = data["error"].get("code", 502)
             status = int(code) if str(code).isdigit() else 502
@@ -74,13 +89,17 @@ class OpenRouterAdapter:
     @async_retry(max_retries=3, max_rate_limit_wait=0)
     async def generate_for_router(self, prompt: str, system: str, budget: TokenBudget) -> str:
         self._check_rate_limit()
-        with provider_request("openrouter", self.model, budget.remaining) as record:
+        payload = self._payload(prompt, system, budget)
+        with provider_request("openrouter", self.model, payload["max_tokens"]) as record:
             try:
-                async with httpx.AsyncClient(timeout=90) as client:
+                async with (
+                    asyncio.timeout(GENERATION_TIMEOUT_SECONDS),
+                    httpx.AsyncClient(timeout=90) as client,
+                ):
                     response = await client.post(
                         URL,
                         headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
-                        json=self._payload(prompt, system, budget),
+                        json=payload,
                     )
                 record.status_code = response.status_code
                 record.provider_request_id = response.headers.get("x-request-id")
@@ -97,8 +116,10 @@ class OpenRouterAdapter:
                     or not isinstance(content, str)
                     or not content.strip()
                 ):
-                    raise ValueError("LLM completion was incomplete or empty")
+                    raise LLMOutputError("OpenRouter", finish_reason=record.finish_reason)
                 return content
+            except (TimeoutError, httpx.TimeoutException) as exc:
+                raise LLMTimeoutError("OpenRouter") from exc
             except httpx.HTTPError as exc:
                 raise LLMProviderError("OpenRouter") from exc
 
@@ -106,7 +127,8 @@ class OpenRouterAdapter:
         self, prompt: str, system: str, budget: TokenBudget
     ) -> AsyncGenerator[str, None]:
         self._check_rate_limit()
-        with provider_request("openrouter", self.model, budget.remaining) as record:
+        payload = self._payload(prompt, system, budget)
+        with provider_request("openrouter", self.model, payload["max_tokens"]) as record:
             try:
                 async with (
                     httpx.AsyncClient(timeout=90) as client,
@@ -115,7 +137,7 @@ class OpenRouterAdapter:
                         URL,
                         headers={"Authorization": f"Bearer {settings.OPENROUTER_API_KEY}"},
                         json={
-                            **self._payload(prompt, system, budget),
+                            **payload,
                             "stream": True,
                             "stream_options": {"include_usage": True},
                         },

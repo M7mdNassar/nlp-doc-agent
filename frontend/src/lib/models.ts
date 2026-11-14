@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createId } from "./id";
 
 export const documentSchema = z.object({
   id: z.string(),
@@ -121,7 +122,7 @@ export const STORAGE_KEY = "folio.workspace.v1";
 export const MAX_FILE_BYTES = 50 * 1024 * 1024;
 export function makeConversation(docIds: string[] | null = null): Conversation {
   return {
-    id: crypto.randomUUID(),
+    id: createId(),
     title: "New conversation",
     messages: [],
     docIds,

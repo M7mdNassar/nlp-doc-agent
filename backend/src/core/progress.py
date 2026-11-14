@@ -22,7 +22,7 @@ STAGES: dict[str, tuple[AgentName, str, str | None]] = {
 }
 TOOL_LABELS = {
     "calculator": "Calculator",
-    "table_extractor": "Table extraction",
+    "table_extractor": "Table extractor",
     "document_comparison": "Document comparison",
     "data_analysis": "Data analysis",
 }
@@ -67,7 +67,7 @@ class ProgressTrace:
         usage: dict[str, ToolUsage] = {}
         for step in self.steps:
             name = step["tool"]
-            if name is None:
+            if name is None or name not in TOOL_LABELS:
                 continue
             item = usage.setdefault(
                 name,

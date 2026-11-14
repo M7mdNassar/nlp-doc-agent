@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from ..value_objects.confidence import Confidence
 from ..value_objects.page_range import PageRange
+from ..value_objects.table_data import validate_table_data
 from .chunk import Chunk
 from .table import Table
 
@@ -18,6 +19,9 @@ class EvidencePackage:
     def from_chunks(
         cls, chunks: list[Chunk], diagnostics: dict[str, str] | None = None
     ) -> "EvidencePackage":
+        for chunk in chunks:
+            if chunk.table_data:
+                validate_table_data(chunk.table_data)
         tables = [
             Table(
                 c.document_id,

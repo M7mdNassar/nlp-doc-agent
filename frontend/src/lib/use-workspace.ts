@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createId } from "./id";
 import { api, ApiError, errorText } from "./api";
 import {
   Conversation,
@@ -316,7 +317,7 @@ export function useWorkspace() {
     const abort = new AbortController();
     controller.current = abort;
     const userMessage: Message = {
-      id: crypto.randomUUID(),
+      id: createId(),
       role: "user",
       text,
       createdAt: Date.now(),
@@ -352,7 +353,7 @@ export function useWorkspace() {
         },
       );
       const reply: Message = {
-        id: crypto.randomUUID(),
+        id: createId(),
         role: "assistant",
         text: answer.answer,
         answer,
@@ -369,7 +370,7 @@ export function useWorkspace() {
         ? "You stopped waiting for this answer. The server may still finish processing it."
         : errorText(error);
       const reply: Message = {
-        id: crypto.randomUUID(),
+        id: createId(),
         role: "assistant",
         text: "",
         error: message,

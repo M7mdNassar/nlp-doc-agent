@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 from qdrant_client import AsyncQdrantClient, models
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.application.use_cases.upload_document import UploadDocumentUseCase
@@ -23,7 +23,7 @@ from src.domain.entities.job import Job, JobStatus
 from src.domain.value_objects.chunk_id import ChunkId
 from src.domain.value_objects.document_id import DocumentId
 from src.domain.value_objects.sparse_vector import SparseVector
-from src.infrastructure.relational.models import Base, JobModel
+from src.infrastructure.relational.models import Base, IngestionClaimModel, JobModel
 from src.infrastructure.relational.repositories.chunk_repository import ChunkRepository
 from src.infrastructure.relational.repositories.conversation_repository import (
     ConversationRepository,
@@ -50,7 +50,7 @@ async def database(tmp_path):
 async def local_vectors(monkeypatch):
     client = AsyncQdrantClient(location=":memory:")
     monkeypatch.setattr(qdrant_adapter, "AsyncQdrantClient", lambda **kwargs: client)
-    adapter = qdrant_adapter.QdrantAdapter()
+    adapter = qdrant_adapter.QdrantAdapter(published_ids=None)
     await client.create_collection(
         COLLECTION_NAME,
         vectors_config={
@@ -144,7 +144,9 @@ async def test_upload_deduplicates_and_reindex_preserves_document_id(
         assert duplicate.value.status_code == 409
         assert duplicate.value.details["document_id"] == str(doc.id)
         assert len(send) == 1 and send[0]["args"][2] == job.job_id
-        # Pre-upgrade jobs could remain queued even though their documents were indexed.
+        # Simulate a pre-upgrade queued job, which had no atomic admission claim.
+        await session.execute(delete(IngestionClaimModel))
+        await session.commit()
         doc.status = DocumentStatus.INDEXED
         await documents.save(doc)
         reindexed, new_job = await use_case.reindex(doc.id)
@@ -264,12 +266,21 @@ async def test_ingestion_uses_real_parsers_sqlite_and_vector_storage(
             await ingestion.run(doc.id, str(path))
             count_before = (await vectors.client.count(COLLECTION_NAME)).count
             await ingestion.run(doc.id, str(path))
-            assert (await vectors.client.count(COLLECTION_NAME)).count == count_before
+            # Retired vectors are retained, but only the SQL-published set is searchable.
+            assert (await vectors.client.count(COLLECTION_NAME)).count == 2 * count_before
+            published = await chunks.get_by_document(doc.id)
+            assert len(published) == count_before
+
+            async def active(_):
+                return [str(c.id) for c in published]
+
+            vectors.published_ids = active
             assert (await documents.get(doc.id)).status == DocumentStatus.INDEXED
             evidence = await vectors.hybrid_search(
                 [1.0, 0.0, 0.0], SparseVector([1], [1.0]), {"chapter": "4"}
             )
             assert evidence.tables and evidence.tables[0].rows == [["Accuracy", "92"]]
+            assert {c.id for c in evidence.chunks} == {c.id for c in published}
             assert all(c.document_name == "sample.docx" for c in evidence.chunks)
     finally:
         await vectors.client.close()

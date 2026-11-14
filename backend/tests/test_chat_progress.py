@@ -51,8 +51,9 @@ async def test_progress_arrives_before_work_finishes_and_collects_all_tool_calls
     frames = [frame async for frame in stream]
     assert "SECRET" not in "".join(frames)
     answer = event(frames[-1])["result"]
-    assert [tool["name"] for tool in answer["tools_used"]] == ["hybrid_search", "calculator"]
+    assert [tool["name"] for tool in answer["tools_used"]] == ["calculator"]
     assert all(tool["calls"] == tool["completed"] == 2 for tool in answer["tools_used"])
+    assert any(step["tool"] == "hybrid_search" for step in answer["activity"])
     assert all(step["status"] == "completed" for step in answer["activity"])
     assert current_progress() is None
 

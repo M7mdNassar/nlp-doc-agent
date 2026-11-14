@@ -378,7 +378,7 @@ async def test_chat_uses_saved_history_filters_and_persists_new_turn():
         "What are its disadvantages in paper.pdf?", conversation.id, MetadataFilters(page=4)
     )
     args = orchestrator.process.await_args.args
-    assert args[1]["page"] == 4 and args[1]["doc_ids"] == [str(document.id)]
+    assert args[1] == {"page": 4}  # Filename inference follows contextual rewriting.
     assert "What is RAG?" in args[2][0]
     assert result["conversation_id"] == conversation.id
     assert len(conversation.messages) == 4

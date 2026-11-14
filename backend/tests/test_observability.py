@@ -6,7 +6,7 @@ from unittest.mock import Mock
 import pytest
 
 from src.core.observability import current_trace, question_scope, stage
-from src.domain.exceptions.llm_provider_error import LLMRateLimitError
+from src.domain.exceptions.llm_provider_error import LLMOutputError, LLMRateLimitError
 from src.domain.value_objects.token_budget import TokenBudget
 from src.infrastructure.llm import groq_adapter
 from tests.test_llm_provider_errors import adapter_with, rate_error
@@ -31,19 +31,17 @@ def completion(input_tokens=100, output_tokens=25, finish="stop", content="ok"):
 async def test_usage_includes_truncated_completions_and_actual_retry_requests(monkeypatch):
     adapter, create, _ = adapter_with(monkeypatch, [completion(finish="length"), completion()])
     with question_scope() as trace, stage("answer_generation"):
-        assert (
-            await adapter.generate("private question", "private document", TokenBudget(100)) == "ok"
-        )
+        with pytest.raises(LLMOutputError):
+            await adapter.generate("private question", "private document", TokenBudget(100))
         summary = trace.summary()
-    assert create.await_count == 2
+    assert create.await_count == 1
     assert summary["llm_calls"] == 1
-    assert summary["provider_requests"] == 2 and summary["retries"] == 1
-    assert summary["input_tokens"] == 200 and summary["output_tokens"] == 50
-    assert summary["total_tokens"] == 250 and summary["cached_input_tokens"] == 60
+    assert summary["provider_requests"] == 1 and summary["retries"] == 0
+    assert summary["input_tokens"] == 100 and summary["output_tokens"] == 25
+    assert summary["total_tokens"] == 125 and summary["cached_input_tokens"] == 30
     assert summary["usage_complete"]
     assert summary["calls"][0]["finish_reason"] == "length"
     assert summary["calls"][0]["status"] == "error"
-    assert summary["calls"][1]["status"] == "ok"
     assert summary["calls"][0]["stage"] == "answer_generation"
     assert summary["calls"][0]["provider_request_id"] == "req_provider"
     assert summary["calls"][0]["reasoning_tokens"] == 5

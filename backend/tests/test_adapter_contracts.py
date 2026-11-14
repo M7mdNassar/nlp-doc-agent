@@ -5,6 +5,7 @@ import pytest
 from qdrant_client import AsyncQdrantClient, models
 
 from src.domain.entities.chunk import Chunk
+from src.domain.exceptions.llm_provider_error import LLMOutputError
 from src.domain.value_objects.chunk_id import ChunkId
 from src.domain.value_objects.document_id import DocumentId
 from src.domain.value_objects.sparse_vector import SparseVector
@@ -36,7 +37,7 @@ async def test_incomplete_or_empty_provider_output_is_rejected(monkeypatch, reas
     )
     monkeypatch.setattr(groq_adapter, "AsyncGroq", lambda **kwargs: client)
     adapter = groq_adapter.GroqAdapter()
-    with pytest.raises(ValueError, match="incomplete or empty"):
+    with pytest.raises(LLMOutputError, match="incomplete"):
         await adapter.generate.__wrapped__(adapter, "q", "s", TokenBudget(100))
 
 
@@ -93,7 +94,8 @@ async def test_vector_count_mismatch_is_rejected_before_upload(monkeypatch, coun
 async def test_qdrant_round_trip_preserves_domain_ids_and_is_idempotent(monkeypatch):
     client = AsyncQdrantClient(location=":memory:")
     monkeypatch.setattr(qdrant_adapter, "AsyncQdrantClient", lambda **kwargs: client)
-    adapter = qdrant_adapter.QdrantAdapter()
+    # This isolated vector contract has no SQL publication repository.
+    adapter = qdrant_adapter.QdrantAdapter(published_ids=None)
     try:
         await client.create_collection(
             COLLECTION_NAME,

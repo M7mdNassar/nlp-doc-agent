@@ -13,6 +13,7 @@ from src.core.logging import setup_logging
 from src.core.observability import question_details
 from src.domain.exceptions.llm_provider_error import (
     LLMConfigurationError,
+    LLMOutputError,
     LLMProviderError,
     LLMRateLimitError,
 )
@@ -30,7 +31,9 @@ def create_app() -> FastAPI:
     async def llm_error_handler(request: Request, exc: LLMProviderError) -> JSONResponse:
         rate_limited = isinstance(exc, LLMRateLimitError)
         code = (
-            "LLM_RATE_LIMITED"
+            "LLM_OUTPUT_INVALID"
+            if isinstance(exc, LLMOutputError)
+            else "LLM_RATE_LIMITED"
             if rate_limited
             else "LLM_CONFIGURATION_ERROR"
             if isinstance(exc, LLMConfigurationError)

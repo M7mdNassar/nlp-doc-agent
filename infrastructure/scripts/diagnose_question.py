@@ -157,10 +157,10 @@ class RecordingAnswer:
         finally:
             self.capture.flush()
 
-    async def review(self, draft: Any, evidence: EvidencePackage, analysis: Any) -> Any:
+    async def review(self, draft: Any, evidence: EvidencePackage, analysis: Any, *, question: str) -> Any:
         record = self.capture.data["answer_attempts"][-1]
         try:
-            review = await self.inner.review(draft, evidence, analysis)
+            review = await self.inner.review(draft, evidence, analysis, question=question)
             record["review"] = review.model_dump()
             record["accepted"] = review.accepts(len(draft.blocks))
             return review

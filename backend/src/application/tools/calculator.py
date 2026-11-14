@@ -1,7 +1,9 @@
 import ast
 import operator
 from collections.abc import Callable
-from decimal import Decimal
+from decimal import Decimal, Underflow, localcontext
+
+from .numbers import validate_number
 
 OPERATORS: dict[type[ast.operator], Callable[[Decimal, Decimal], Decimal]] = {
     ast.Add: operator.add,
@@ -12,6 +14,17 @@ OPERATORS: dict[type[ast.operator], Callable[[Decimal, Decimal], Decimal]] = {
 
 
 def calculate(expression: str, values: dict[str, Decimal]) -> Decimal:
+    try:
+        with localcontext() as context:
+            context.traps[Underflow] = True
+            return _calculate(expression, values)
+    except SyntaxError as exc:
+        raise ValueError("Invalid arithmetic syntax") from exc
+    except ArithmeticError as exc:
+        raise ValueError("Undefined arithmetic operation") from exc
+
+
+def _calculate(expression: str, values: dict[str, Decimal]) -> Decimal:
     tree = ast.parse(expression, mode="eval")
     if len(list(ast.walk(tree))) > 100:
         raise ValueError("Expression is too complex")
@@ -23,8 +36,8 @@ def calculate(expression: str, values: dict[str, Decimal]) -> Decimal:
         if isinstance(node, ast.Expression):
             return evaluate(node.body)
         if isinstance(node, ast.Name):
-            return values[node.id]
-        if isinstance(node, ast.Constant) and type(node.value) in (int, float):
+            result = values[node.id]
+        elif isinstance(node, ast.Constant) and type(node.value) in (int, float):
             result = Decimal(str(node.value))
         elif isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
             result = evaluate(node.operand) * (1 if isinstance(node.op, ast.UAdd) else -1)
@@ -34,9 +47,7 @@ def calculate(expression: str, values: dict[str, Decimal]) -> Decimal:
             raise ValueError(
                 "Only numbers, supplied variables, and arithmetic operators are allowed"
             )
-        if not result.is_finite() or abs(result) > Decimal("1e18"):
-            raise ValueError("Calculation is outside the supported range")
-        return result
+        return validate_number(result)
 
     return evaluate(tree)
 

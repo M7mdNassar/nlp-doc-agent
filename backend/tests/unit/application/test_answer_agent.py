@@ -22,6 +22,7 @@ def grounding_response(supported=True, qualifications_preserved=True, no_added_d
         {
             "supported": [supported],
             "qualifications_preserved": [qualifications_preserved],
+            "answers_question": True,
             "no_added_details": [no_added_details],
         }
     )
@@ -128,7 +129,10 @@ async def test_grounding_review_uses_selected_excerpt_not_uncited_chunk_text(sam
     chunk.text += " Extra uncited information."
     llm = SimpleNamespace(generate=AsyncMock(return_value=grounding_response()))
     assert await AnswerAgent(llm).is_grounded(
-        draft, EvidencePackage(chunks=[chunk]), AnalysisResult(True, "")
+        draft,
+        EvidencePackage(chunks=[chunk]),
+        AnalysisResult(True, ""),
+        question="What does the source report?",
     )
     payload = json.loads(llm.generate.await_args.args[0])
     source = payload["sources"][payload["blocks"][0]["source_ids"][0]]
@@ -180,6 +184,7 @@ async def test_quality_correction_does_not_reuse_unverified_findings(sample_chun
             {
                 "supported": [True, True],
                 "qualifications_preserved": [True],
+                "answers_question": True,
                 "no_added_details": [True],
             }
         ),
@@ -187,6 +192,7 @@ async def test_quality_correction_does_not_reuse_unverified_findings(sample_chun
             {
                 "supported": [True],
                 "qualifications_preserved": [True, True],
+                "answers_question": True,
                 "no_added_details": [True],
             }
         ),
@@ -194,6 +200,7 @@ async def test_quality_correction_does_not_reuse_unverified_findings(sample_chun
             {
                 "supported": [True],
                 "qualifications_preserved": [True],
+                "answers_question": True,
                 "no_added_details": [True, True],
             }
         ),
@@ -211,7 +218,10 @@ async def test_grounding_review_rejects_false_or_wrong_length_verdict(sample_chu
     )
     llm = SimpleNamespace(generate=AsyncMock(return_value=response))
     assert not await AnswerAgent(llm).is_grounded(
-        draft, EvidencePackage(chunks=sample_chunks), AnalysisResult(True, "")
+        draft,
+        EvidencePackage(chunks=sample_chunks),
+        AnalysisResult(True, ""),
+        question="What does the source report?",
     )
 
 
@@ -235,7 +245,10 @@ async def test_incomplete_or_non_boolean_quality_reviews_fail_closed(sample_chun
     llm = SimpleNamespace(generate=AsyncMock(return_value=response))
     with pytest.raises(ValueError):
         await AnswerAgent(llm).is_grounded(
-            draft, EvidencePackage(chunks=sample_chunks), AnalysisResult(True, "")
+            draft,
+            EvidencePackage(chunks=sample_chunks),
+            AnalysisResult(True, ""),
+            question="What does the source report?",
         )
 
 
@@ -267,13 +280,17 @@ async def test_review_deduplicates_text_without_losing_qualifications_or_citatio
                 {
                     "supported": [True] * 7,
                     "qualifications_preserved": [True] * 7,
+                    "answers_question": True,
                     "no_added_details": [True] * 7,
                 }
             )
         )
     )
     await AnswerAgent(llm).review(
-        draft, EvidencePackage(chunks=[chunk, other]), AnalysisResult(True, "")
+        draft,
+        EvidencePackage(chunks=[chunk, other]),
+        AnalysisResult(True, ""),
+        question="What does the source report?",
     )
     serialized, instructions, _ = llm.generate.await_args.args
     payload = json.loads(serialized)

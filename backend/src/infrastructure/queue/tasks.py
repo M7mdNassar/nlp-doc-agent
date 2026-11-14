@@ -50,7 +50,7 @@ async def _ingest_document_async(
             job.status, job.error = JobStatus.FAILED, str(exc)
             await jobs.save(job)
             doc = await documents.get(DocumentId(document_id))
-            if doc:
+            if doc and not await ChunkRepository(session).get_by_document(doc.id):
                 doc.mark_failed(str(exc))
                 await documents.save(doc)
             logger.exception("ingestion_job_failed", job_id=job.job_id)

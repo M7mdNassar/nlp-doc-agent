@@ -9,7 +9,9 @@ from src.core.observability import retry_wait
 from src.domain.exceptions.llm_provider_error import (
     LLMConfigurationError,
     LLMCooldownError,
+    LLMOutputError,
     LLMRateLimitError,
+    LLMTimeoutError,
 )
 
 logger = structlog.get_logger(__name__)
@@ -29,7 +31,7 @@ def async_retry(
             while provider_attempts < max_retries:
                 try:
                     return await func(*args, **kwargs)
-                except LLMConfigurationError:
+                except (LLMConfigurationError, LLMOutputError, LLMTimeoutError):
                     raise
                 except LLMRateLimitError as exc:
                     # A cooldown check sends no request. In particular, a sleep that

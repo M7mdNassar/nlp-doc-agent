@@ -1,17 +1,40 @@
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.domain.entities.job import Job, JobStatus
 from src.domain.ports.job_repository import JobRepository as IJobRepository
 from src.domain.value_objects.document_id import DocumentId
-from src.infrastructure.relational.models import JobModel
+from src.infrastructure.relational.models import IngestionClaimModel, JobModel
 
 
 class JobRepository(IJobRepository):
     def __init__(self, session: AsyncSession):
         self.session = session
+
+    async def claim(self, job: Job) -> bool:
+        result = await self.session.execute(
+            insert(IngestionClaimModel)
+            .values(document_id=str(job.document_id), job_id=job.job_id)
+            .on_conflict_do_nothing(index_elements=["document_id"])
+            .returning(IngestionClaimModel.document_id)
+        )
+        if result.scalar_one_or_none() is None:
+            await self.session.rollback()
+            return False
+        # The claim and queued job become visible in one transaction.
+        self.session.add(
+            JobModel(
+                job_id=job.job_id,
+                document_id=str(job.document_id),
+                status=job.status.value,
+                error=job.error,
+            )
+        )
+        await self.session.commit()
+        return True
 
     async def save(self, job: Job) -> None:
         stmt = select(JobModel).where(JobModel.job_id == job.job_id)
@@ -31,6 +54,13 @@ class JobRepository(IJobRepository):
             )
             self.session.add(model)
 
+        if job.status in {JobStatus.COMPLETED, JobStatus.FAILED}:
+            await self.session.execute(
+                delete(IngestionClaimModel).where(
+                    IngestionClaimModel.document_id == str(job.document_id),
+                    IngestionClaimModel.job_id == job.job_id,
+                )
+            )
         await self.session.commit()
 
     async def get(self, job_id: str) -> Job | None:

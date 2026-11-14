@@ -22,22 +22,26 @@ class ContextSelector:
         counts: Counter[str] = Counter()
         used = 0
         remaining = list(enumerate(ranked))
+        # Selection revisits candidates, but these exact features never change.
+        costs = [
+            self.count_tokens(chunk.text + chunk.document_name + (chunk.section or "")) + 32
+            for chunk in ranked
+        ]
+        word_sets = [set(re.findall(r"\w+", chunk.text.casefold())) for chunk in ranked]
+        selected_words: list[set[str]] = []
         while remaining and len(selected) < self.max_chunks:
             best: tuple[int, Chunk] | None = None
             best_score = float("-inf")
             for rank, chunk in remaining:
                 doc_id = str(chunk.document_id)
-                cost = (
-                    self.count_tokens(chunk.text + chunk.document_name + (chunk.section or "")) + 32
-                )
+                cost = costs[rank]
                 if used + cost > self.max_tokens or counts[doc_id] >= self.per_document:
                     continue
-                words = set(re.findall(r"\w+", chunk.text.casefold()))
+                words = word_sets[rank]
                 overlap = 0.0
-                for previous in selected:
+                for previous, other in zip(selected, selected_words, strict=True):
                     if previous.document_id != chunk.document_id:
                         continue
-                    other = set(re.findall(r"\w+", previous.text.casefold()))
                     overlap = max(overlap, len(words & other) / max(1, len(words | other)))
                 # Similar wording can still differ in a number, negation, or caveat.
                 # Only discard exact duplicates within one document; cross-document
@@ -60,8 +64,9 @@ class ContextSelector:
             remaining.remove(best)
             chunk = best[1]
             selected.append(chunk)
+            selected_words.append(word_sets[best[0]])
             counts[str(chunk.document_id)] += 1
-            used += self.count_tokens(chunk.text + chunk.document_name + (chunk.section or "")) + 32
+            used += costs[best[0]]
         self._record_selection(ranked, selected, counts)
         return selected
 

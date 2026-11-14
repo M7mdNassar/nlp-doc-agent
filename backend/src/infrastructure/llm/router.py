@@ -1,11 +1,19 @@
 import asyncio
+import math
+import time
 from collections.abc import AsyncGenerator
 
 import structlog
 
 from src.core.config import settings
 from src.core.observability import current_trace, llm_call_scope, llm_operation, retry_wait
-from src.domain.exceptions.llm_provider_error import LLMCooldownError, LLMRateLimitError
+from src.domain.exceptions.llm_provider_error import (
+    LLMCooldownError,
+    LLMOutputError,
+    LLMProviderError,
+    LLMRateLimitError,
+    LLMTimeoutError,
+)
 from src.domain.ports.llm import LLMClient
 from src.domain.value_objects.token_budget import TokenBudget
 
@@ -64,11 +72,39 @@ class LLMRouter(LLMClient):
         providers = list(dict.fromkeys(error.provider for error in errors))
         return LLMRateLimitError(" / ".join(providers), delay)
 
+    @staticmethod
+    async def _wait_for_alternative(
+        failure: LLMProviderError,
+        limits: list[tuple[LLMRateLimitError, float]],
+        attempt: int,
+        remaining: float,
+    ) -> None:
+        # A slow fallback can consume the earlier models' cooldowns. Subtract
+        # elapsed time, and permit only the existing second routing pass.
+        waits = [
+            max(0.0, error.retry_after_seconds - (time.monotonic() - recorded))
+            for error, recorded in limits
+            if error.retry_after_seconds is not None
+        ]
+        if attempt or not waits:
+            raise failure
+        delay = math.ceil(min(waits))
+        if delay > remaining:
+            raise failure
+        if delay:
+            with retry_wait(delay, "provider_output_recovery"):
+                await asyncio.sleep(delay)
+
     @llm_operation
     async def generate(self, prompt: str, system: str, budget: TokenBudget) -> str:
+        unavailable: set[int] = set()
+        failure: LLMProviderError | None = None
         for attempt in range(2):
             errors: list[LLMRateLimitError] = []
+            limits: list[tuple[LLMRateLimitError, float]] = []
             for index, provider in enumerate(self.providers):
+                if index in unavailable:
+                    continue
                 try:
                     response = await provider.generate_for_router(prompt, system, budget)
                     logger.info("llm_model_selected", model=provider.model, fallback=index > 0)
@@ -76,10 +112,30 @@ class LLMRouter(LLMClient):
                 except LLMRateLimitError as exc:
                     self._log_limit(provider, exc)
                     errors.append(exc)
-            exhausted = self._exhausted(errors)
+                    limits.append((exc, time.monotonic()))
+                except (LLMOutputError, LLMTimeoutError) as exc:
+                    # Never parse/approve a partial completion. Allow one alternate
+                    # completed response, not unlimited retries or larger budgets.
+                    if (
+                        isinstance(exc, LLMOutputError) and exc.finish_reason != "length"
+                    ) or failure is not None:
+                        raise
+                    failure = exc
+                    unavailable.add(index)
+                    logger.warning(
+                        "llm_model_output_truncated"
+                        if isinstance(exc, LLMOutputError)
+                        else "llm_model_timed_out",
+                        model=provider.model,
+                        action="try_configured_alternative",
+                    )
             trace = current_trace()
             spent = sum(float(wait["planned_seconds"]) for wait in trace.waits) if trace else 0
             remaining = settings.LLM_FALLBACK_MAX_WAIT_SECONDS - spent
+            if failure is not None:
+                await self._wait_for_alternative(failure, limits, attempt, remaining)
+                continue
+            exhausted = self._exhausted(errors)
             # Unknown resets and long daily limits must not become blind retry loops.
             # Cached cooldowns may belong to a smaller, earlier prompt. Prefer
             # fresh HTTP hints, which were computed for this call's token demand.

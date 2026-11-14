@@ -10,6 +10,7 @@ from src.core.observability import llm_call_scope, llm_operation, provider_reque
 from src.domain.exceptions.llm_provider_error import (
     LLMConfigurationError,
     LLMCooldownError,
+    LLMOutputError,
     LLMProviderError,
     LLMRateLimitError,
 )
@@ -82,7 +83,7 @@ class GroqAdapter(LLMClient):
             request.finish_reason = response.choices[0].finish_reason
             content = response.choices[0].message.content or ""
             if request.finish_reason != "stop" or not content.strip():
-                raise ValueError("LLM completion was incomplete or empty")
+                raise LLMOutputError("Groq", finish_reason=request.finish_reason)
             return content
 
     async def stream(

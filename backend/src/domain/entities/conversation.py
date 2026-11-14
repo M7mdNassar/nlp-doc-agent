@@ -15,6 +15,8 @@ class Conversation:
     id: str
     user_id: str
     messages: list[Message] = field(default_factory=list)
+    # Optimistic persistence token; not part of the conversation's logical value.
+    persisted_messages: list[dict[str, str]] | None = field(default=None, compare=False, repr=False)
 
     @classmethod
     def create(cls, user_id: str) -> "Conversation":

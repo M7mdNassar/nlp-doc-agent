@@ -12,6 +12,7 @@ from src.core.progress import ProgressTrace, progress_scope
 from src.domain.entities.answer import ChatResult
 from src.domain.exceptions.llm_provider_error import (
     LLMConfigurationError,
+    LLMOutputError,
     LLMProviderError,
     LLMRateLimitError,
 )
@@ -45,6 +46,8 @@ def stream_error(exc: Exception) -> dict[str, Any]:
             "code": "LLM_CONFIGURATION_ERROR",
             "message": "The AI provider could not accept the request. Check the backend configuration.",
         }
+    if isinstance(exc, LLMOutputError):
+        return {"status": 503, "code": "LLM_OUTPUT_INVALID", "message": str(exc)}
     if isinstance(exc, LLMProviderError):
         return {
             "status": 503,
