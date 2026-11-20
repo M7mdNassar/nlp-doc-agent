@@ -6,6 +6,7 @@ from src.api.dependencies.providers import get_delete_doc_uc, get_list_docs_uc, 
 from src.application.use_cases.delete_document import DeleteDocumentUseCase
 from src.application.use_cases.list_documents import ListDocumentsUseCase
 from src.application.use_cases.upload_document import UploadDocumentUseCase
+from src.core.config import settings
 from src.core.errors import ValidationError
 from src.domain.value_objects.document_id import DocumentId
 
@@ -20,7 +21,7 @@ async def upload_document(
     filename = file.filename
     if not filename:
         raise ValidationError("Uploaded file must have a filename.")
-    content = await file.read()
+    content = await file.read(settings.MAX_UPLOAD_BYTES + 1)
     file_type = filename.split(".")[-1] if "." in filename else "txt"
     doc, job = await uc.execute(filename, file_type, content)
     return {"document_id": str(doc.id), "job_id": job.job_id, "status": job.status.value}

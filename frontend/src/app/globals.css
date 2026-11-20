@@ -1079,6 +1079,37 @@ strong {
   color: var(--muted);
   margin-left: auto;
 }
+.voice-query {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.voice-status {
+  color: var(--muted);
+  font-size: 11px;
+  max-width: 180px;
+}
+.report-form {
+  display: grid;
+  gap: 14px;
+}
+.report-form label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+}
+.report-form :is(input, textarea) {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--panel);
+  color: var(--ink);
+  font: inherit;
+}
+.report-form .button {
+  justify-self: start;
+}
 .send-button {
   width: 31px;
   height: 31px;

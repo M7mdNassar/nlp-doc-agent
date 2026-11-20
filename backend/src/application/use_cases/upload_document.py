@@ -29,7 +29,9 @@ class UploadDocumentUseCase:
         try:
             parser_factory.get_parser(file_type)
         except ValueError as exc:
-            raise ValidationError("Supported file types are PDF, DOCX, TXT, and Markdown.") from exc
+            raise ValidationError(
+                "Supported file types are PDF, DOCX, TXT, Markdown, PNG, JPEG, and WebP."
+            ) from exc
         if not file_bytes or len(file_bytes) > settings.MAX_UPLOAD_BYTES:
             raise ValidationError(f"Upload must contain 1 to {settings.MAX_UPLOAD_BYTES} bytes.")
         checksum = hashlib.sha256(file_bytes).hexdigest()

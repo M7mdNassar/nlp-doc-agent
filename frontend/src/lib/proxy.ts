@@ -2,7 +2,9 @@ const MAX_BODY_BYTES = 51 * 1024 * 1024; // 50 MiB file plus multipart overhead.
 const id = "[a-zA-Z0-9_-]+";
 const routes: Record<string, RegExp> = {
   GET: new RegExp(`^(health|documents|jobs/${id})$`),
-  POST: new RegExp(`^(chat(?:/stream)?|documents|documents/${id}/reindex)$`),
+  POST: new RegExp(
+    `^(chat(?:/stream)?|documents|documents/${id}/reindex|voice/transcribe|reports/pdf)$`,
+  ),
   DELETE: new RegExp(`^documents/${id}$`),
 };
 
@@ -38,8 +40,16 @@ export async function proxyRequest(request: Request, segments: string[]) {
         "ORIGIN_MISMATCH",
       );
   }
-  if (Number(request.headers.get("content-length") || 0) > MAX_BODY_BYTES) {
-    return error("Choose a file smaller than 50 MB.", 413, "UPLOAD_TOO_LARGE");
+  const limit =
+    path === "reports/pdf"
+      ? 512 * 1024
+      : path === "voice/transcribe"
+        ? 10 * 1024 * 1024 + 64 * 1024
+        : MAX_BODY_BYTES;
+  const sizeError = () =>
+    error("This request is too large.", 413, "UPLOAD_TOO_LARGE");
+  if (Number(request.headers.get("content-length") || 0) > limit) {
+    return sizeError();
   }
   try {
     let body: ArrayBuffer | undefined;
@@ -51,13 +61,9 @@ export async function proxyRequest(request: Request, segments: string[]) {
         const next = await reader.read();
         if (next.done) break;
         size += next.value.byteLength;
-        if (size > MAX_BODY_BYTES) {
+        if (size > limit) {
           await reader.cancel();
-          return error(
-            "Choose a file smaller than 50 MB.",
-            413,
-            "UPLOAD_TOO_LARGE",
-          );
+          return sizeError();
         }
         chunks.push(next.value);
       }
@@ -74,7 +80,11 @@ export async function proxyRequest(request: Request, segments: string[]) {
     ).replace(/\/$/, "");
     const streaming = path === "chat/stream";
     const headers = new Headers({
-      Accept: streaming ? "text/event-stream" : "application/json",
+      Accept: streaming
+        ? "text/event-stream"
+        : path === "reports/pdf"
+          ? "application/pdf"
+          : "application/json",
     });
     const contentType = request.headers.get("content-type");
     if (contentType) headers.set("Content-Type", contentType);
@@ -100,6 +110,13 @@ export async function proxyRequest(request: Request, segments: string[]) {
         ...(streaming ? { "X-Accel-Buffering": "no" } : {}),
         ...(upstream.headers.has("retry-after")
           ? { "Retry-After": upstream.headers.get("retry-after")! }
+          : {}),
+        ...(path === "reports/pdf" && upstream.ok
+          ? {
+              "Content-Disposition": 'attachment; filename="folio-report.pdf"',
+              "X-Report-Design":
+                upstream.headers.get("x-report-design") || "standard",
+            }
           : {}),
       },
     });

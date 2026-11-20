@@ -12,6 +12,12 @@ uses Next.js, React, and TypeScript; the backend uses FastAPI and Python.
 
 - **Document ingestion:** PDF, DOCX, TXT, and Markdown, with background indexing,
   job status, duplicate-upload detection, reindexing, and deletion.
+- **Voice queries:** record a question in the browser and review its transcription
+  before submitting it through the same document chat pipeline.
+- **Image OCR:** upload PNG, JPEG, and WebP images containing text. The worker
+  extracts and indexes the text with source references to the original image.
+- **PDF reports:** export a completed answer, analysis results, and citations.
+  A report agent chooses typography and layout from optional design instructions.
 - **PDF extraction:** scientific text, source locations, structured tables, and
   aligned-layout fallback for partially ruled tables. Adjacent captions stay
   with their tables.
@@ -54,6 +60,35 @@ The orchestrator is a bounded Python state machine. Verification is part of the
 Answer role, although the activity UI displays it as a separate visible stage.
 The grounding review is a separate model call; deterministic citation checks are
 not. Three agent roles do not imply a fixed number of model calls.
+
+### Voice queries, image OCR, and PDF reports
+
+| Feature | Workspace action | FastAPI endpoint |
+| --- | --- | --- |
+| Voice query | Select the microphone in the composer, record, stop, review the transcript, and send. | `POST /voice/transcribe` accepts multipart `file` and returns `{ "text": "..." }`. Send the transcript to `/chat` or `/chat/stream`. |
+| Image OCR | Choose **Add sources**, upload an image, and wait for its status to become **Ready**. Select the image when asking a question about it. | `POST /documents` accepts the image. `GET /jobs/{job_id}` tracks indexing. |
+| PDF report | Select **PDF report** below a cited answer, enter a title and optional design instructions, and download. | `POST /reports/pdf` takes a title, design brief, question, answer, sources, and optional tool results. It returns an `application/pdf` attachment. |
+
+The microphone requires browser permission and either localhost or HTTPS. The
+browser records up to 45 seconds. FastAPI accepts audio files up to 10 MiB and
+sends them to Groq for transcription. `TRANSCRIPTION_MODEL` defaults to
+`whisper-large-v3-turbo` and uses the configured `GROQ_API_KEY`.
+If the permission prompt is missing, check the site controls beside the
+browser address bar and allow microphone access for the workspace. The
+microphone button cancels a pending request, and Folio returns to the composer
+with guidance after 20 seconds if the browser leaves the request pending.
+
+The worker runs Tesseract locally. It accepts still PNG, JPEG, and WebP images
+up to 20 million pixels and uses English by default (`OCR_LANGUAGES=eng`). Install
+additional Tesseract language packs in the worker before configuring another
+language. Source excerpts identify the origin as **Image text (OCR)**.
+
+The report agent receives formatting instructions and content counts. The PDF
+includes the original answer, available tool outputs, and cited excerpts. The
+agent can choose font family, font sizes, colors, page size, margin, spacing,
+one or two columns, heading style, title alignment, and section order. ReportLab
+renders the content. If the provider fails or returns an invalid design, the
+download uses the standard layout and the workspace tells the user.
 
 | Component                  | Responsibility                                                          |
 | -------------------------- | ----------------------------------------------------------------------- |
@@ -396,6 +431,9 @@ provider quota; the synthetic [backend smoke script](infrastructure/scripts/smok
 avoids reading the application's documents or modifying its database.
 
 ## Operations and diagnostics
+
+The [Terraform infrastructure guide](infrastructure/terraform/README.md) explains
+Folio's planned AWS layout and how to verify it offline for Task 6.
 
 Recreate containers after `.env` changes; a plain restart does not reload their
 environment. To update an existing GPU installation's application services:

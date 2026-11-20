@@ -43,6 +43,7 @@ import { type DocumentItem, type Source, sourceLocation } from "@/lib/models";
 import { AnswerMessage } from "./answer";
 import { AgentFlow } from "./agent-activity";
 import { Brand, FileBadge, Modal, StatusBadge } from "./ui";
+import { VoiceQuery } from "./voice-query";
 
 const suggestions = [
   {
@@ -363,7 +364,7 @@ export function Workspace() {
         <button className="sidebar-upload" onClick={() => setUploadOpen(true)}>
           <Upload size={17} />
           <span>
-            Add your documents<small>PDF, Word, text & Markdown</small>
+            Add your documents<small>PDF, Word, text & images</small>
           </span>
           <Plus size={15} />
         </button>
@@ -652,6 +653,11 @@ export function Workspace() {
                       <AnswerMessage
                         key={message.id}
                         message={message}
+                        question={
+                          workspace.active?.messages
+                            .slice(0, messageIndex)
+                            .findLast((m) => m.role === "user")?.text || ""
+                        }
                         onSource={(sources, index) =>
                           setSourceView({ sources, index })
                         }
@@ -764,6 +770,17 @@ export function Workspace() {
                       ? `${draft.length}/8000`
                       : "Enter to send · Shift + Enter for a new line"}
                   </span>
+                  <VoiceQuery
+                    key={workspace.active?.id ?? "new"}
+                    disabled={!workspace.canSend}
+                    onTranscript={(text) => {
+                      setDraft((previous) => {
+                        const next = previous ? `${previous}\n${text}` : text;
+                        return next.length <= 8000 ? next : text;
+                      });
+                      composer.current?.focus();
+                    }}
+                  />
                   {workspace.pending ? (
                     <button
                       type="button"
@@ -1002,7 +1019,7 @@ export function Workspace() {
           ref={input}
           type="file"
           multiple
-          accept=".pdf,.docx,.txt,.md"
+          accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.webp"
           className="sr-only"
           aria-label="Choose files to upload"
           onChange={(event) => {
@@ -1045,7 +1062,9 @@ export function Workspace() {
               </>
             )}
           </span>
-          <small>PDF, DOCX, TXT, MD · Up to 50 MB per file</small>
+          <small>
+            PDF, DOCX, TXT, MD, PNG, JPEG, WebP · Up to 50 MB per file
+          </small>
         </button>
         {workspace.fileErrors.map((error, i) => (
           <div key={i} className="upload-error" role="alert">
@@ -1093,7 +1112,10 @@ export function Workspace() {
           excerpts are shared with your AI provider when answering.
         </p>
         <div className="modal-footer">
-          <span>Scanned PDFs need searchable text before upload.</span>
+          <span>
+            Text in images is indexed using OCR. Scanned PDFs need searchable
+            text.
+          </span>
           <button
             className="button secondary"
             onClick={() => {

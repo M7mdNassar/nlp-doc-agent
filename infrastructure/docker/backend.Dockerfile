@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     tesseract-ocr \
     libtesseract-dev \
     poppler-utils \
+    fonts-dejavu-extra \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
