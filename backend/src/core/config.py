@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     CEREBRAS_API_KEY: str = Field(default="", description="Cerebras API Key")
     OPENROUTER_API_KEY: str = Field(default="", description="OpenRouter API Key")
     OPENROUTER_FALLBACK_MODELS: list[str] = Field(default_factory=list)
+    TRANSCRIPTION_MODEL: str = "whisper-large-v3-turbo"
 
     # Infrastructure
     QDRANT_URL: str = Field(default="http://qdrant:6333")
@@ -21,6 +22,7 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = Field(default="info")
     DATA_DIR: str = Field(default="/app/data")
     MAX_UPLOAD_BYTES: int = Field(default=50 * 1024 * 1024, gt=0)
+    OCR_LANGUAGES: str = Field(default="eng", pattern=r"^[a-zA-Z0-9_]+(?:\+[a-zA-Z0-9_]+)*$")
     QUESTION_TIMEOUT_SECONDS: float = Field(default=180, ge=1, le=600)
     ANSWER_CACHE_ENABLED: bool = True
     ANSWER_CACHE_SEMANTIC_ENABLED: bool = True

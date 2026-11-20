@@ -15,6 +15,7 @@ import type { Answer, Message, Source } from "@/lib/models";
 import { sourceLocation } from "@/lib/models";
 import { Brand, FileBadge } from "./ui";
 import { ActivityHistory, ToolsUsed } from "./agent-activity";
+import { ReportDownload } from "./report-download";
 
 function label(text: string) {
   return text.replace(/[\[\]\r\n]/g, " ").trim();
@@ -122,11 +123,13 @@ export function answerMarkdown(answer: Answer) {
 
 export function AnswerMessage({
   message,
+  question,
   onSource,
   onRetry,
   disabled,
 }: {
   message: Message;
+  question: string;
   onSource: (sources: Source[], index: number) => void;
   onRetry: () => void;
   disabled: boolean;
@@ -258,6 +261,15 @@ export function AnswerMessage({
               {copyError && (
                 <span role="status">Select the answer text to copy it.</span>
               )}
+              {answer?.state === "answer_ready" &&
+                answer.sources.length > 0 &&
+                question && (
+                  <ReportDownload
+                    answer={answer}
+                    content={answerMarkdown(answer)}
+                    question={question}
+                  />
+                )}
               <time dateTime={new Date(message.createdAt).toISOString()}>
                 {new Date(message.createdAt).toLocaleTimeString([], {
                   hour: "2-digit",

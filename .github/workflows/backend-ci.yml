@@ -37,4 +37,7 @@ jobs:
         run: cd backend && uv run --no-sync mypy src
         
       - name: Test with pytest
-        run: cd backend && uv run --no-sync pytest
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+          cd backend && uv run --no-sync pytest

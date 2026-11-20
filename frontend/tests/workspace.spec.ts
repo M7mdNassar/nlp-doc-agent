@@ -175,6 +175,183 @@ async function mockApi(page: Page, initial: DocumentItem[] = documents) {
   };
 }
 
+test.use({
+  launchOptions: {
+    args: [
+      "--use-fake-device-for-media-stream",
+      "--use-fake-ui-for-media-stream",
+    ],
+  },
+});
+
+test.describe("microphone questions", () => {
+  test("recovers when the permission prompt never resolves", async ({
+    page,
+  }) => {
+    await mockApi(page);
+    await page.clock.install();
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+        value: () => new Promise<MediaStream>(() => {}),
+      });
+    });
+    await page.goto("/");
+    const mic = page.getByRole("button", { name: "Record a question" });
+    await mic.click();
+    await expect(
+      page.getByText(/Waiting for microphone permission/),
+    ).toBeVisible();
+    await page.clock.fastForward(20_001);
+    await expect(
+      page.getByText(/Microphone permission timed out/),
+    ).toContainText("site controls");
+    await expect(mic).toBeEnabled();
+    await mic.click();
+    await expect(
+      page.getByRole("button", { name: "Cancel microphone request" }),
+    ).toBeEnabled();
+  });
+
+  test("cancels a pending request and releases audio granted after canceling", async ({
+    page,
+  }) => {
+    await mockApi(page);
+    await page.addInitScript(() => {
+      const getUserMedia = navigator.mediaDevices.getUserMedia.bind(
+        navigator.mediaDevices,
+      );
+      let requests = 0;
+      Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+        value: () => {
+          if (++requests > 1) return getUserMedia({ audio: true });
+          return new Promise<MediaStream>((resolve) => {
+            window.addEventListener(
+              "grant-late-microphone",
+              () => {
+                void getUserMedia({ audio: true }).then((stream) => {
+                  resolve(stream);
+                  queueMicrotask(() => {
+                    document.body.dataset.lateMicTrack =
+                      stream.getAudioTracks()[0].readyState;
+                  });
+                });
+              },
+              { once: true },
+            );
+          });
+        },
+      });
+    });
+    await page.goto("/");
+    const mic = page.getByRole("button", { name: "Record a question" });
+    await mic.click();
+    await page
+      .getByRole("button", { name: "Cancel microphone request" })
+      .click();
+    await expect(page.getByText("Microphone request canceled.")).toBeVisible();
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("grant-late-microphone")),
+    );
+    await expect(page.locator("body")).toHaveAttribute(
+      "data-late-mic-track",
+      "ended",
+    );
+    await expect(mic).toBeEnabled();
+    await mic.click();
+    await expect(
+      page.getByRole("button", { name: "Stop recording" }),
+    ).toBeEnabled();
+  });
+
+  for (const [error, message] of [
+    ["NotAllowedError", /Microphone access was blocked/],
+    ["NotFoundError", /No microphone was found/],
+    ["NotReadableError", /Could not open the microphone/],
+  ] as const) {
+    test(`shows microphone guidance after ${error}`, async ({ page }) => {
+      await mockApi(page);
+      await page.addInitScript((name) => {
+        Object.defineProperty(navigator.mediaDevices, "getUserMedia", {
+          value: () => Promise.reject(new DOMException("Capture denied", name)),
+        });
+      }, error);
+      await page.goto("/");
+      const mic = page.getByRole("button", { name: "Record a question" });
+      await mic.click();
+      await expect(page.getByText(message)).toBeVisible();
+      await expect(mic).toBeEnabled();
+      await expect(
+        page.getByRole("textbox", {
+          name: "Ask a question about your documents",
+        }),
+      ).toBeEditable();
+    });
+  }
+
+  test("records audio, lets the user edit the transcript, then sends it through chat", async ({
+    page,
+  }) => {
+    const requests = await mockApi(page);
+    await page.route("**/api/backend/voice/transcribe", async (route) => {
+      expect(route.request().headers()["content-type"]).toContain(
+        "multipart/form-data",
+      );
+      expect(route.request().postDataBuffer()?.length).toBeGreaterThan(256);
+      await route.fulfill({ json: { text: "What was the throughput?" } });
+    });
+    await page.goto("/");
+    await page.getByRole("button", { name: "Record a question" }).click();
+    await expect(page.getByText("Recording · up to 45 seconds")).toBeVisible();
+    // Allow Chromium's fake microphone to emit encoded audio frames.
+    await page.waitForTimeout(500);
+    await page.getByRole("button", { name: "Stop recording" }).click();
+    const composer = page.getByRole("textbox", {
+      name: "Ask a question about your documents",
+    });
+    await expect(composer).toHaveValue("What was the throughput?");
+    expect(requests.chats).toHaveLength(0);
+    await composer.fill("What was the simulated throughput?");
+    await page.getByRole("button", { name: "Send message" }).click();
+    await expect
+      .poll(() => requests.chats[0]?.message)
+      .toBe("What was the simulated throughput?");
+  });
+});
+
+test("downloads a PDF with the selected answer, design brief, and citations", async ({
+  page,
+}) => {
+  await mockApi(page);
+  await page.route("**/api/backend/reports/pdf", async (route) => {
+    expect(route.request().postDataJSON()).toMatchObject({
+      title: "Traffic results",
+      design: "Use navy headings",
+      question: "Explain throughput.",
+      sources: [source],
+    });
+    await route.fulfill({
+      body: "%PDF-1.7\n",
+      headers: {
+        "content-type": "application/pdf",
+        "x-report-design": "agent",
+      },
+    });
+  });
+  await page.goto("/");
+  await page
+    .getByRole("textbox", { name: "Ask a question about your documents" })
+    .fill("Explain throughput.");
+  await page.getByRole("button", { name: "Send message" }).click();
+  await page.getByRole("button", { name: "PDF report" }).click();
+  await page.getByLabel("Report title").fill("Traffic results");
+  await page
+    .getByLabel("Design instructions (optional)")
+    .fill("Use navy headings");
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download PDF" }).click();
+  expect((await downloaded).suggestedFilename()).toBe("folio-report.pdf");
+});
+
 test("agent flow follows live events, repeats retrieval, and saves tools after completion", async ({
   page,
 }, testInfo) => {
@@ -661,7 +838,9 @@ test("invalid uploads are rejected without an API upload", async ({ page }) => {
     page.getByText("This file is empty. Choose a file with content."),
   ).toBeVisible();
   await expect(
-    page.getByText("Choose a PDF, Word (.docx), text, or Markdown file."),
+    page.getByText(
+      "Choose a PDF, Word (.docx), text, Markdown, PNG, JPEG, or WebP file.",
+    ),
   ).toBeVisible();
   expect(uploads).toBe(0);
 });
@@ -823,7 +1002,9 @@ test("light and dark workspace and dialogs meet automated accessibility checks",
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("workspace IDs remain available when randomUUID is absent", async ({ page }) => {
+test("workspace IDs remain available when randomUUID is absent", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     Object.defineProperty(Crypto.prototype, "randomUUID", {
       configurable: true,
@@ -832,14 +1013,20 @@ test("workspace IDs remain available when randomUUID is absent", async ({ page }
   });
   await mockApi(page);
   await page.goto("/");
-  await expect(page.getByRole("button", { name: "Connected", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Connected", exact: true }),
+  ).toBeVisible();
   const id = await page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem("folio.workspace.v1")!);
     return state.conversations[0].id as string;
   });
-  expect(id).toMatch(/^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i);
+  expect(id).toMatch(
+    /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i,
+  );
   await page.reload();
-  await expect(page.getByRole("button", { name: "Connected", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Connected", exact: true }),
+  ).toBeVisible();
 });
 
 test("mobile layout has no horizontal overflow and supports navigation", async ({

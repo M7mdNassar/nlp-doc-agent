@@ -152,6 +152,47 @@ export async function readChatStream(
   }
 }
 export const api = {
+  report: async (
+    payload: {
+      title: string;
+      design: string;
+      question: string;
+      answer: string;
+      sources: Answer["sources"];
+      tool_results: Pick<Answer["tool_results"][number], "name" | "output">[];
+    },
+    signal: AbortSignal,
+  ) => {
+    const response = await fetch("/api/backend/reports/pdf", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/pdf",
+      },
+      body: JSON.stringify(payload),
+      signal,
+    });
+    if (!response.ok) await parseResponse(response, z.unknown());
+    if (!response.headers.get("content-type")?.startsWith("application/pdf"))
+      throw new ApiError("The service did not return a PDF.", 502);
+    return {
+      file: await response.blob(),
+      design: response.headers.get("x-report-design"),
+    };
+  },
+  transcribe: (file: File, signal: AbortSignal) => {
+    const body = new FormData();
+    body.append("file", file);
+    return request(
+      "voice/transcribe",
+      z.object({ text: z.string().min(1).max(8000) }),
+      {
+        method: "POST",
+        body,
+        signal,
+      },
+    );
+  },
   documents: (signal?: AbortSignal) =>
     request("documents", documentListSchema, { signal }),
   health: (signal?: AbortSignal) => request("health", healthSchema, { signal }),

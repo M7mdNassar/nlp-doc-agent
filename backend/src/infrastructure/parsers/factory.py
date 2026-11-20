@@ -1,6 +1,7 @@
 from src.domain.ports.parser import DocumentParser
 
 from .docx_parser import DOCXParser
+from .image_parser import ImageParser
 from .markdown_parser import MarkdownParser
 from .pdf_parser import PDFParser
 from .txt_parser import TXTParser
@@ -13,6 +14,7 @@ class ParserFactory:
             DOCXParser(),
             TXTParser(),
             MarkdownParser(),
+            ImageParser(),
         ]
 
     def get_parser(self, file_type: str) -> DocumentParser:

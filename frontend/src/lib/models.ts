@@ -140,8 +140,8 @@ export function fileKind(name: string) {
   return name.split(".").pop()?.toUpperCase() || "FILE";
 }
 export function validateFile(file: File): string | null {
-  if (!/\.(pdf|docx|txt|md)$/i.test(file.name))
-    return "Choose a PDF, Word (.docx), text, or Markdown file.";
+  if (!/\.(pdf|docx|txt|md|png|jpe?g|webp)$/i.test(file.name))
+    return "Choose a PDF, Word (.docx), text, Markdown, PNG, JPEG, or WebP file.";
   if (file.size === 0) return "This file is empty. Choose a file with content.";
   if (file.size > MAX_FILE_BYTES) return "This file is larger than 50 MB.";
   return null;
